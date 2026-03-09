@@ -100,6 +100,20 @@ void draw_player_username(const Player &p, ImFont *font) {
     ImGui::End();
 }
 
+void draw_this_player(SDL_Renderer *renderer, Player &p, ImFont* font) {
+    auto orig_x = p.x;
+    auto orig_y = p.y;
+
+    p.x = window_size / 2;
+    p.y = window_size / 2;
+
+    draw_player(renderer, p);
+    draw_player_username(p, font);
+
+    p.x = orig_x;
+    p.y = orig_y;
+}
+
 void draw_obstacle(SDL_Renderer *renderer, const Obstacle &o) {
     SDL_FRect frect {
         static_cast<float>(o.x),
@@ -606,8 +620,12 @@ int main(int argv, char **argc) {
         SDL_RenderClear(renderer);
 
         for (const auto &[id, player] : players) {
-            draw_player(renderer, player);
-            draw_player_username(player, username_font);
+            if (id == local_player.id) {
+                draw_this_player(renderer, local_player, username_font);
+            } else {
+                draw_player(renderer, player);
+                draw_player_username(player, username_font);
+            }
         }
         
         for (const auto &obstacle : obstacles)
