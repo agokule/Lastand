@@ -72,9 +72,8 @@ void draw_particles(SDL_Renderer *renderer, const std::vector<Particle> &particl
     }
 }
 
-
 void draw_player(SDL_Renderer *renderer, const Player &p) {
-    SDL_FRect frect {static_cast<float>(p.x / 2.0), static_cast<float>(p.y / 2.0), player_size, player_size};
+    SDL_FRect frect {static_cast<float>(p.x), static_cast<float>(p.y), player_size, player_size};
     SDL_FRect shadow_frect {frect.x + 3, frect.y + 3, frect.w, frect.h};
     bool success;
 
@@ -90,7 +89,7 @@ void draw_player(SDL_Renderer *renderer, const Player &p) {
 }
 
 void draw_player_username(const Player &p, ImFont *font) {
-    ImGui::SetNextWindowPos(ImVec2(p.x / 2.0 - 10, p.y / 2.0 - 20));
+    ImGui::SetNextWindowPos(ImVec2(p.x - 8, p.y - 17));
     ImGui::Begin((p.username + "Username").c_str(), nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
     std::string username_to_display = p.username;
     if (ImGui::CalcTextSize(username_to_display.c_str()).x > 30)
@@ -103,8 +102,8 @@ void draw_player_username(const Player &p, ImFont *font) {
 
 void draw_obstacle(SDL_Renderer *renderer, const Obstacle &o) {
     SDL_FRect frect {
-        static_cast<float>(o.x / 2.0),
-        static_cast<float>(o.y / 2.0),
+        static_cast<float>(o.x),
+        static_cast<float>(o.y),
         static_cast<float>(o.width),
         static_cast<float>(o.height)
     };
@@ -116,8 +115,8 @@ void draw_obstacle(SDL_Renderer *renderer, const Obstacle &o) {
 
 void draw_projectile(SDL_Renderer *renderer, const Projectile &p) {
     SDL_FRect frect {
-        static_cast<float>(p.x / 2.0),
-        static_cast<float>(p.y / 2.0),
+        static_cast<float>(p.x),
+        static_cast<float>(p.y),
         3.0, 3.0
     };
     bool success = SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
