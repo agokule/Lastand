@@ -141,11 +141,6 @@ void draw_projectile(SDL_Renderer *renderer, const Projectile &p) {
 
 const std::string window_title {"Lastand Client"};
 
-void draw_frame(SDL_Renderer *renderer, const std::vector<Player> &players) {
-    for (const auto &player: players)
-        draw_player(renderer, player);
-}
-
 ClientMovement create_client_movement(SDL_Scancode key) {
     ClientMovement m;
     switch (key) {
