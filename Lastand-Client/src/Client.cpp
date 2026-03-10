@@ -58,8 +58,7 @@ void update_particles(std::vector<Particle> &particles) {
     for (auto p = particles.begin(); p != particles.end(); ++p) {
         p->update();
         if (p->life_left <= 0) {
-            particles.erase(p);
-            p--;
+            p = particles.erase(p);
         }
     }
 }

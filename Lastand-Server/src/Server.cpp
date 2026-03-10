@@ -247,10 +247,8 @@ std::map<uint8_t, uint8_t> run_game_tick(std::map<int, ClientData> &players, con
 #endif
     }
     std::map<uint8_t, uint8_t> dead_players;
-    std::vector<uint16_t> projectiles_to_remove;
-    projectiles_to_remove.reserve(projectiles.size());
-    uint16_t idx = 0;
-    for (auto &p : projectiles) {
+    for (auto it = projectiles.begin(); it != projectiles.end(); it++) {
+        auto& p = *it;
         p.move(4);
         Player player_that_got_hit;
         bool hit_player = std::any_of(
@@ -269,16 +267,13 @@ std::map<uint8_t, uint8_t> run_game_tick(std::map<int, ClientData> &players, con
             std::any_of(obstacles.begin(), obstacles.end(), 
                         [p](Obstacle ob) { return point_in_rect(ob.x, ob.y, ob.width, ob.height, p.x, p.y); })
         ) {
-            projectiles_to_remove.push_back(idx);
+            it = projectiles.erase(it);
             if (hit_player) {
                 // someone got hit and died
                 dead_players[player_that_got_hit.id] = p.player_id;
             }
         }
-        idx++;
     }
-    for (auto idx : projectiles_to_remove)
-        projectiles.erase(projectiles.begin() + idx);
     return dead_players;
 }
 
