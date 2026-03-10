@@ -84,9 +84,11 @@ void deserialize_and_update_game_player_positions(const std::vector<uint8_t> &da
 std::vector<uint8_t> serialize_previous_game_data(const std::vector<Player> &players, const std::vector<Obstacle> &obstacles);
 std::pair<std::map<int, Player>, std::vector<Obstacle>> deserialize_and_update_previous_game_data(const std::vector<uint8_t> &data);
 
-std::array<uint8_t, 12> serialize_projectile(Projectile p);
-Projectile deserialize_projectile(const std::array<uint8_t, 12> &data);
+std::array<uint8_t, 12> serialize_client_projectile(ClientProjectile p);
+ClientProjectile deserialize_client_projectile(const std::array<uint8_t, 12> &data);
 
+std::array<uint8_t, 4> serialize_projectile(Projectile p);
+Projectile deserialize_projectile(const std::array<uint8_t, 4> &data);
 
 int32_t deserialize_int32(std::array<uint8_t, 4> data);
 std::array<uint8_t, 4> serialize_int32(int32_t val);

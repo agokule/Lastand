@@ -52,7 +52,7 @@ struct ProjectileDouble {
     uint16_t start_x;
     uint16_t start_y;
 
-    ProjectileDouble(Projectile p, uint8_t player_id)
+    ProjectileDouble(ClientProjectile p, uint8_t player_id)
         : x{static_cast<double>(p.x)}, y{static_cast<double>(p.y)},
           dx{p.dx / std::sqrt(std::pow(p.dx, 2) + std::pow(p.dy, 2))},
           dy{std::sqrt(1 - dx * dx) * (p.dy < 0 ? -1 : 1)},
@@ -123,7 +123,7 @@ void parse_client_shoot(const ENetEvent &event, std::vector<ProjectileDouble> &p
         event.packet->data[11],
         event.packet->data[12],
     };
-    Projectile p {deserialize_projectile(projectile_data)};
+    ClientProjectile p {deserialize_client_projectile(projectile_data)};
     ProjectileDouble pd {p, static_cast<ClientData *>(event.peer->data)->p.id};
 
 #ifdef DEBUG
@@ -267,11 +267,13 @@ std::map<uint8_t, uint8_t> run_game_tick(std::map<int, ClientData> &players, con
             std::any_of(obstacles.begin(), obstacles.end(), 
                         [p](Obstacle ob) { return point_in_rect(ob.x, ob.y, ob.width, ob.height, p.x, p.y); })
         ) {
-            it = projectiles.erase(it);
             if (hit_player) {
                 // someone got hit and died
                 dead_players[player_that_got_hit.id] = p.player_id;
             }
+            it = projectiles.erase(it);
+            if (it == projectiles.end())
+                break;
         }
     }
     return dead_players;
@@ -467,7 +469,10 @@ int main(int argv, char **argc) {
                 projectile_data.push_back(static_cast<uint8_t>(MessageToClientTypes::UpdateProjectiles));
                 projectile_data.push_back(static_cast<uint8_t>(projectiles.size()));
                 for (auto &pd: projectiles) {
-                    Projectile p {static_cast<uint16_t>(pd.x), static_cast<uint16_t>(pd.y), static_cast<int32_t>(pd.dx), static_cast<int32_t>(pd.dy)};
+                    Projectile p {static_cast<uint16_t>(pd.x), static_cast<uint16_t>(pd.y)};
+                    #ifdef DEBUG
+                    printf("Projectile: (%d, %d)\n", p.x, p.y);
+                    #endif
                     auto p_data = serialize_projectile(p);
                     projectile_data.insert(projectile_data.end(), p_data.cbegin(), p_data.cend());
                 }

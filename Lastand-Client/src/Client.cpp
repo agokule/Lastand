@@ -59,6 +59,8 @@ void update_particles(std::vector<Particle> &particles) {
         p->update();
         if (p->life_left <= 0) {
             p = particles.erase(p);
+            if (p == particles.end())
+                break;
         }
     }
 }
@@ -219,9 +221,9 @@ std::vector<uint8_t> handle_key_up(SDL_Scancode key, std::pair<short, short> &pl
 std::vector<uint8_t> handle_mouse_up(const Player& local_player, SDL_MouseButtonEvent event) {
     auto y = static_cast<uint16_t>(local_player.y + player_size / 2.0f);
     auto x = static_cast<uint16_t>(local_player.x + player_size / 2.0f);
-    Projectile p {x, y, static_cast<int32_t>(event.x - window_size / 2.0f), static_cast<int32_t>(event.y - window_size / 2.0f)};
+    ClientProjectile p {x, y, static_cast<int32_t>(event.x - window_size / 2.0f), static_cast<int32_t>(event.y - window_size / 2.0f)};
     std::cout << "Projectile: (" << p.x << ", " << p.y << ")(" << p.dx << ", " << p.dy << ")\n";
-    auto data = serialize_projectile(p);
+    auto data = serialize_client_projectile(p);
     std::vector<uint8_t> msg {
         static_cast<uint8_t>(MessageToServerTypes::Shoot)
     };
@@ -271,19 +273,11 @@ std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map
         case MessageToClientTypes::UpdateProjectiles: {
             projectiles.clear();
             for (size_t i = 1, proj = 0; i < data_without_type.size() && proj < data_without_type[0]; i += sizeof(Projectile), proj++) {
-                std::array<uint8_t, 12> data {
+                std::array<uint8_t, 4> data {
                     data_without_type[i],
                     data_without_type[i + 1],
                     data_without_type[i + 2],
                     data_without_type[i + 3],
-                    data_without_type[i + 4],
-                    data_without_type[i + 5],
-                    data_without_type[i + 6],
-                    data_without_type[i + 7],
-                    data_without_type[i + 8],
-                    data_without_type[i + 9],
-                    data_without_type[i + 10],
-                    data_without_type[i + 11]
                 };
                 projectiles.push_back(deserialize_projectile(data));
             }

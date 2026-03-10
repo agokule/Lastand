@@ -370,7 +370,7 @@ bool operator&(ClientMovement c1, ClientMovement c2) {
     return (uint8_t)c1 & (uint8_t)c2;
 }
 
-std::array<uint8_t, 12> serialize_projectile(Projectile p) {
+std::array<uint8_t, 12> serialize_client_projectile(ClientProjectile p) {
     std::array<uint8_t, 12> result;
 
     // testing serializing int32
@@ -401,7 +401,7 @@ std::array<uint8_t, 12> serialize_projectile(Projectile p) {
     return result;
 }
 
-Projectile deserialize_projectile(const std::array<uint8_t, 12> &data) {
+ClientProjectile deserialize_client_projectile(const std::array<uint8_t, 12> &data) {
     auto x = deserialize_uint16(data[0], data[1]);
     auto y = deserialize_uint16(data[2], data[3]);
 
@@ -409,5 +409,27 @@ Projectile deserialize_projectile(const std::array<uint8_t, 12> &data) {
     auto dy = deserialize_int32({data[8], data[9], data[10], data[11]});
 
     return {x, y, dx, dy};
+}
+
+std::array<uint8_t, 4> serialize_projectile(Projectile p) {
+    std::array<uint8_t, 4> result;
+
+    // testing serializing int32
+    auto [high_byte, low_byte] = serialize_uint16(p.x);
+    result[0] = high_byte;
+    result[1] = low_byte;
+    
+    std::tie(high_byte, low_byte) = serialize_uint16(p.y);
+    result[2] = high_byte;
+    result[3] = low_byte;
+
+    return result;
+}
+
+Projectile deserialize_projectile(const std::array<uint8_t, 4> &data) {
+    auto x = deserialize_uint16(data[0], data[1]);
+    auto y = deserialize_uint16(data[2], data[3]);
+
+    return {x, y};
 }
 
