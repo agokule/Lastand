@@ -256,7 +256,7 @@ std::map<uint8_t, uint8_t> run_game_tick(std::map<int, ClientData> &players, con
         bool hit_player = std::any_of(
             players.begin(), players.end(),
             [p, &player_that_got_hit](const std::pair<uint8_t, ClientData> &data) {
-                if (point_in_rect(data.second.p.x, data.second.p.y, player_size * 2, player_size * 2, p.x, p.y) &&
+                if (point_in_rect(data.second.p.x, data.second.p.y, player_size, player_size, p.x, p.y) &&
                     data.second.p.id != p.player_id)
                 {
                     player_that_got_hit = data.second.p;
@@ -267,7 +267,7 @@ std::map<uint8_t, uint8_t> run_game_tick(std::map<int, ClientData> &players, con
         double distance_travelled = std::sqrt(std::pow(p.x - p.start_x, 2) + std::pow(p.y - p.start_y, 2));
         if (p.x > max_x || p.y > max_y + player_size || p.x < min_x || p.y < min_y || (hit_player) || distance_travelled >= max_obstacle_distance_travelled ||
             std::any_of(obstacles.begin(), obstacles.end(), 
-                        [p](Obstacle ob) { return point_in_rect(ob.x, ob.y, ob.width * 2, ob.height * 2, p.x, p.y); })
+                        [p](Obstacle ob) { return point_in_rect(ob.x, ob.y, ob.width, ob.height, p.x, p.y); })
         ) {
             projectiles_to_remove.push_back(idx);
             if (hit_player) {

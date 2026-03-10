@@ -72,8 +72,16 @@ void draw_particles(SDL_Renderer *renderer, const std::vector<Particle> &particl
     }
 }
 
-void draw_player(SDL_Renderer *renderer, const Player &p) {
-    SDL_FRect frect {static_cast<float>(p.x), static_cast<float>(p.y), player_size, player_size};
+void draw_player(SDL_Renderer *renderer, const Player &p, const Player& local_player) {
+    SDL_FRect frect {
+        static_cast<float>(p.x - local_player.x + window_size / 2.0f),
+        static_cast<float>(p.y - local_player.y + window_size / 2.0f),
+        player_size, player_size
+    };
+    if (local_player.id == p.id) {
+        frect.x = local_player.x;
+        frect.y = local_player.y;
+    }
     SDL_FRect shadow_frect {frect.x + 3, frect.y + 3, frect.w, frect.h};
     bool success;
 
@@ -88,8 +96,19 @@ void draw_player(SDL_Renderer *renderer, const Player &p) {
     if (!success) std::cerr << "Error in SDL_RenderFillRect: " << SDL_GetError();
 }
 
-void draw_player_username(const Player &p, ImFont *font) {
-    ImGui::SetNextWindowPos(ImVec2(p.x - 8, p.y - 17));
+void draw_player_username(const Player &p, ImFont *font, const Player& local_player) {
+    ImVec2 next_window_pos {
+        (int)p.x - local_player.x - 8 + window_size / 2.0f,
+        (int)p.y - local_player.y - 17 + window_size / 2.0f
+    };
+    if (local_player.id == p.id) {
+        next_window_pos.x -= window_size / 2.0f;
+        next_window_pos.y -= window_size / 2.0f;
+
+        next_window_pos.x += local_player.x;
+        next_window_pos.y += local_player.y;
+    }
+    ImGui::SetNextWindowPos(next_window_pos);
     ImGui::Begin((p.username + "Username").c_str(), nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
     std::string username_to_display = p.username;
     if (ImGui::CalcTextSize(username_to_display.c_str()).x > 30)
@@ -107,17 +126,17 @@ void draw_this_player(SDL_Renderer *renderer, Player &p, ImFont* font) {
     p.x = window_size / 2;
     p.y = window_size / 2;
 
-    draw_player(renderer, p);
-    draw_player_username(p, font);
+    draw_player(renderer, p, p);
+    draw_player_username(p, font, p);
 
     p.x = orig_x;
     p.y = orig_y;
 }
 
-void draw_obstacle(SDL_Renderer *renderer, const Obstacle &o) {
+void draw_obstacle(SDL_Renderer *renderer, const Obstacle &o, const Player& local_player) {
     SDL_FRect frect {
-        static_cast<float>(o.x),
-        static_cast<float>(o.y),
+        static_cast<float>(o.x - local_player.x + window_size / 2.0f),
+        static_cast<float>(o.y - local_player.y + window_size / 2.0f),
         static_cast<float>(o.width),
         static_cast<float>(o.height)
     };
@@ -127,10 +146,10 @@ void draw_obstacle(SDL_Renderer *renderer, const Obstacle &o) {
     if (!success) std::cerr << "Error in SDL_RenderFillRect: " << SDL_GetError();
 }
 
-void draw_projectile(SDL_Renderer *renderer, const Projectile &p) {
+void draw_projectile(SDL_Renderer *renderer, const Projectile &p, const Player& local_player) {
     SDL_FRect frect {
-        static_cast<float>(p.x),
-        static_cast<float>(p.y),
+        static_cast<float>(p.x - local_player.x + window_size / 2.0f),
+        static_cast<float>(p.y - local_player.y + window_size / 2.0f),
         3.0, 3.0
     };
     bool success = SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
@@ -198,10 +217,10 @@ std::vector<uint8_t> handle_key_up(SDL_Scancode key, std::pair<short, short> &pl
     return msg;
 }
 
-std::vector<uint8_t> handle_mouse_up(uint16_t x, uint16_t y, SDL_MouseButtonEvent event) {
-    y = static_cast<uint16_t>(y + player_size);
-    x = static_cast<uint16_t>(x + player_size);
-    Projectile p {x, y, static_cast<int32_t>(event.x * 2) - x, static_cast<int32_t>(event.y * 2) - y};
+std::vector<uint8_t> handle_mouse_up(const Player& local_player, SDL_MouseButtonEvent event) {
+    auto y = static_cast<uint16_t>(local_player.y + player_size / 2.0f);
+    auto x = static_cast<uint16_t>(local_player.x + player_size / 2.0f);
+    Projectile p {x, y, static_cast<int32_t>(event.x - window_size / 2.0f), static_cast<int32_t>(event.y - window_size / 2.0f)};
     std::cout << "Projectile: (" << p.x << ", " << p.y << ")(" << p.dx << ", " << p.dy << ")\n";
     auto data = serialize_projectile(p);
     std::vector<uint8_t> msg {
@@ -211,14 +230,14 @@ std::vector<uint8_t> handle_mouse_up(uint16_t x, uint16_t y, SDL_MouseButtonEven
     return msg;
 }
 
-std::vector<uint8_t> process_event(const SDL_Event &event, std::pair<short, short> &player_delta, uint16_t player_x, uint16_t player_y) {
+std::vector<uint8_t> process_event(const SDL_Event &event, std::pair<short, short> &player_delta, const Player& local_player) {
     switch (event.type) {
         case SDL_EVENT_KEY_DOWN:
             return handle_key_down(event.key.scancode, player_delta);
         case SDL_EVENT_KEY_UP:
             return handle_key_up(event.key.scancode, player_delta);
         case SDL_EVENT_MOUSE_BUTTON_UP:
-            return handle_mouse_up(player_x, player_y, event.button);
+            return handle_mouse_up(local_player, event.button);
         default:
             return {};
     }
@@ -502,7 +521,7 @@ int main(int argv, char **argc) {
                 running = false;
             else if (connected_to_server && players.find(local_player.id) != players.end()) {
                 auto last_movement = player_movement;
-                std::vector<uint8_t> data_to_send {process_event(event, player_movement, players.at(local_player.id).x, players.at(local_player.id).y)};
+                std::vector<uint8_t> data_to_send {process_event(event, player_movement, players.at(local_player.id))};
                 if (!data_to_send.empty() && (player_movement != last_movement || event.type == SDL_EVENT_MOUSE_BUTTON_UP)) {
                     send_packet(server, data_to_send, channel_updates);
                 }
@@ -616,18 +635,18 @@ int main(int argv, char **argc) {
 
         for (const auto &[id, player] : players) {
             if (id == local_player.id) {
-                draw_this_player(renderer, local_player, username_font);
+                draw_this_player(renderer, players.at(local_player.id), username_font);
             } else {
-                draw_player(renderer, player);
-                draw_player_username(player, username_font);
+                draw_player(renderer, player, players.at(local_player.id));
+                draw_player_username(player, username_font, players.at(local_player.id));
             }
         }
         
         for (const auto &obstacle : obstacles)
-            draw_obstacle(renderer, obstacle);
+            draw_obstacle(renderer, obstacle, players.at(local_player.id));
 
         for (auto p : projectiles)
-            draw_projectile(renderer, p);
+            draw_projectile(renderer, p, players.at(local_player.id));
 
         update_particles(particles);
         draw_particles(renderer, particles);
