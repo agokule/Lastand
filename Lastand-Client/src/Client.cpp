@@ -486,6 +486,25 @@ int main(int argv, char **argc) {
     auto last_time = SDL_GetTicks();
     ImVec4 player_color {1.0f, 1.0f, 1.0f, 1.0f};
     char username[15] = "";
+
+    #ifdef DEBUG
+    // this is so that I don't have to input these things again and again
+    // while developing the game
+
+    // random 3 letter username
+    username[0] = SDL_rand(26) + 'a';
+    username[1] = SDL_rand(26) + 'a';
+    username[2] = SDL_rand(26) + 'a';
+
+    // random color
+    player_color.x = SDL_rand(256) / 256.0f;
+    player_color.y = SDL_rand(256) / 256.0f;
+    player_color.z = SDL_rand(256) / 256.0f;
+
+    server_addr = "localhost";
+    port = 8888;
+    #endif
+
     bool connected_to_server = false;
     bool game_started = false;
     bool is_ready = false;
