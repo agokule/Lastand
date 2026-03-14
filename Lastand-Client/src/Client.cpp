@@ -1,12 +1,14 @@
 #include <SDL3/SDL.h>
 #include "Obstacle.h"
 #include "Player.h"
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <SDL3/SDL_main.h>
+#include "PowerUps.h"
 #include "Projectile.h"
 #include "SDL3/SDL_events.h"
 #include "SDL3/SDL_render.h"
@@ -147,16 +149,40 @@ void draw_obstacle(SDL_Renderer *renderer, const Obstacle &o, const Player& loca
     if (!success) std::cerr << "Error in SDL_RenderFillRect: " << SDL_GetError();
 }
 
-void draw_projectile(SDL_Renderer *renderer, const Projectile &p, const Player& local_player) {
+void draw_point(SDL_Renderer *renderer, const Player& local_player, SDL_Color color, std::pair<uint16_t, uint16_t> coordinates) {
     SDL_FRect frect {
-        static_cast<float>(p.x - local_player.x + window_size / 2.0f),
-        static_cast<float>(p.y - local_player.y + window_size / 2.0f),
+        static_cast<float>(coordinates.first - local_player.x + window_size / 2.0f),
+        static_cast<float>(coordinates.second - local_player.y + window_size / 2.0f),
         3.0, 3.0
     };
-    bool success = SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+    bool success = SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     if (!success) std::cerr << "Error in SDL_SetRenderDrawColor: " << SDL_GetError();
     success = SDL_RenderFillRect(renderer, &frect);
     if (!success) std::cerr << "Error in SDL_RenderFillRect: " << SDL_GetError();
+}
+
+void draw_projectile(SDL_Renderer *renderer, const Projectile &p, const Player& local_player) {
+    draw_point(renderer, local_player, {255, 0, 0, 255}, {p.x, p.y});
+}
+
+void draw_powerup(SDL_Renderer *renderer, const NewPowerUp &p, const Player& local_player) {
+    SDL_Color color {0, 0, 0, 255};
+    switch (p.powerup) {
+        case PowerUp::LongRangeProjectiles:
+            color.r = 120;
+            color.g = 120;
+            break;
+        case PowerUp::PhaseThroughObstacles:
+            color.r = 120;
+            color.b = 120;
+            break;
+        case PowerUp::Speed:
+            color.g = 120;
+            color.b = 120;
+            break;
+    }
+
+    draw_point(renderer, local_player, color, {p.x, p.y});
 }
 
 const std::string window_title {"Lastand Client"};
@@ -244,7 +270,7 @@ std::vector<uint8_t> process_event(const SDL_Event &event, std::pair<short, shor
     }
 }
 
-std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map<int, Player> &player_data, std::vector<Projectile> &projectiles, std::vector<Particle> &particles) {
+std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map<int, Player> &player_data, std::vector<Projectile> &projectiles, std::vector<Particle> &particles, std::vector<NewPowerUp>& powerups) {
     MessageToClientTypes type {data[0]};
     std::vector<uint8_t> data_without_type {data.begin() + 1, data.end()};
     switch (type) {
@@ -314,7 +340,7 @@ std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map
             switch (attribute_type) {
                 case SetPlayerAttributesTypes::UsernameChanged: {
                     std::string username {data_without_type.begin() + 3, data_without_type.end()};
-                    std::cout << "Set username of " << (int)player_id << " to: " << username;
+                    std::cout << "Set username of " << (int)player_id << " to: " << username << '\n';
                     ss << player_data.at(player_id).username << " has changed their username to " << username << std::endl;
                     player_data.at(player_id).username = username;
                     break;
@@ -338,6 +364,55 @@ std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map
             std::string text = "Player " + std::to_string(data_without_type[0]) + " has won!";
             return text;
             break;
+        }
+        case MessageToClientTypes::NewPowerUpSpawned: {
+            assert(data_without_type.size() == 5);
+            std::array<uint8_t, 5> data;
+            for (unsigned idx = 0; idx < data_without_type.size(); idx++)
+                data.at(idx) = data_without_type.at(idx);
+
+            NewPowerUp p = deserialize_new_powerup(data);
+
+            std::stringstream s;
+            s << "New Powerup Spawned at (" << p.x << ", " << p.y << ")\nIt gives the ";
+            switch (p.powerup) {
+                case PowerUp::LongRangeProjectiles:
+                    s << "LongRangeProjectiles";
+                    break;
+                case PowerUp::PhaseThroughObstacles:
+                    s << "PhaseThroughObstacles";
+                    break;
+                case PowerUp::Speed:
+                    s << "Speed";
+                    break;
+            }
+            s << " ability\n";
+
+            powerups.push_back(p);
+            return s.str();
+            break;
+        }
+        case MessageToClientTypes::PowerUpsClaimed: {
+            auto n_claimed = data_without_type.front();
+            for (auto idx = 0u; idx < n_claimed; idx++) {
+                auto id = 1 + idx * (sizeof(NewPowerUp) + 1);
+
+                auto start = std::next(data_without_type.begin(), id + 1);
+                auto end = std::next(start, sizeof(NewPowerUp) - 1);
+                std::array<uint8_t, 5> data;
+                auto dit = data.begin();
+                for (auto it = start; it != end; it++) {
+                    *dit = *it;
+                    dit++;
+                }
+
+                [[maybe_unused]] auto player_id = *std::prev(start);
+
+                NewPowerUp powerup = deserialize_new_powerup(data);
+                auto it = std::find_if(powerups.begin(), powerups.end(), [powerup](const auto p) { return p.x == powerup.x && p.y == powerup.y; });
+                if (it != powerups.end())
+                    powerups.erase(it);
+            }
         }
         case MessageToClientTypes::PreviousGameData:
             break; // previous game data is handled in connect_to_server() function
@@ -483,6 +558,7 @@ int main(int argv, char **argc) {
     std::pair<short, short> player_movement;
     std::vector<Projectile> projectiles;
     std::vector<Particle> particles;
+    std::vector<NewPowerUp> powerups;
     auto last_time = SDL_GetTicks();
     ImVec4 player_color {1.0f, 1.0f, 1.0f, 1.0f};
     char username[15] = "";
@@ -583,7 +659,7 @@ int main(int argv, char **argc) {
                         for (int i{0}; i < enet_event.packet->dataLength; i++)
                             data.push_back(enet_event.packet->data[i]);
                         std::cout << "Received data: " << data << " on channel: " << (int)enet_event.channelID << '\n';
-                        std::string new_event = parse_message_from_server(data, players, projectiles, particles);
+                        std::string new_event = parse_message_from_server(data, players, projectiles, particles, powerups);
                         if (new_event != "") {
                             latest_event = new_event;
                             latest_event_time = SDL_GetTicks();
@@ -659,6 +735,10 @@ int main(int argv, char **argc) {
 
         for (auto p : projectiles)
             draw_projectile(renderer, p, players.at(local_player.id));
+
+        for (auto p : powerups)
+            draw_powerup(renderer, p, players.at(local_player.id));
+
 
         update_particles(particles);
         draw_particles(renderer, particles);

@@ -1,4 +1,5 @@
 #pragma once
+#include "PowerUps.h"
 #include <array>
 #include <vector>
 #ifndef SERIALIZE_H
@@ -55,7 +56,9 @@ enum class MessageToClientTypes: uint8_t {
     PreviousGameData = 6,
     // projectiles have moved
     UpdateProjectiles = 7,
-    GameStarted = 8
+    NewPowerUpSpawned,
+    PowerUpsClaimed,
+    GameStarted
 };
 
 enum class ObjectType: uint8_t {
@@ -65,8 +68,15 @@ enum class ObjectType: uint8_t {
 
 enum class SetPlayerAttributesTypes: uint8_t {
     UsernameChanged = 0,
-    ColorChanged = 1
+    ColorChanged = 1,
+    PowerUpGained = 2,
+    PowerUpRemoved = 2,
 };
+
+// TODO:
+// now that i think about it, these deserialize functions should probably
+// take two iterators start and end so that I don't have to constantly copy
+// data around into new vectors/arrays
 
 std::vector<uint8_t> serialize_player(const Player &player);
 Player deserialize_player(const std::vector<uint8_t> &data);
@@ -92,5 +102,8 @@ Projectile deserialize_projectile(const std::array<uint8_t, 4> &data);
 
 int32_t deserialize_int32(std::array<uint8_t, 4> data);
 std::array<uint8_t, 4> serialize_int32(int32_t val);
+
+std::array<uint8_t, 5> serialize_new_powerup(NewPowerUp np);
+NewPowerUp deserialize_new_powerup(std::array<uint8_t, 5> data);
 
 #endif

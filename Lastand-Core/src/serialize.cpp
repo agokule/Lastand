@@ -1,4 +1,5 @@
 #include "serialize.h"
+#include "PowerUps.h"
 #include "Projectile.h"
 #include <array>
 #include <cstdint>
@@ -81,6 +82,7 @@ std::vector<uint8_t> serialize_player(const Player &player) {
     for (auto c : color) {
         result.push_back(c);
     }
+    result.push_back((uint8_t)player.powerups);
 
     if (player.username.size() > 255) {
         std::cerr << "Username too long to serialize! username: " << player.username << std::endl;
@@ -96,7 +98,7 @@ std::vector<uint8_t> serialize_player(const Player &player) {
 }
 
 Player deserialize_player(const std::vector<uint8_t> &data) {
-    if (data.size() <= 10) {
+    if (data.size() <= 11) {
         std::cerr << "Not enough data to deserialize a player, data: " << data << std::endl;
         throw std::runtime_error("Not enough data to deserialize a player");
     }
@@ -108,13 +110,14 @@ Player deserialize_player(const std::vector<uint8_t> &data) {
     p.y = y;
 
     p.color = {data[5], data[6], data[7], data[8]};
+    p.powerups = (PowerUp)data[9];
     
-    uint8_t username_length = data[9];
-    if (username_length + 9 != data.size() - 1) {
-        std::cerr << "Warning: Username length mismatch: " << (int)username_length + 9 << " vs " << data.size() - 1 << std::endl;
+    uint8_t username_length = data[10];
+    if (username_length + 10 != data.size() - 1) {
+        std::cerr << "Warning: Username length mismatch: " << (int)username_length + 10 << " vs " << data.size() - 1 << std::endl;
     }
     std::string username;
-    for (size_t i {10}; i < data.size(); i++) {
+    for (size_t i {11}; i < data.size(); i++) {
         username.push_back(data[i]);
     }
     p.username = username;
@@ -298,13 +301,13 @@ std::pair<std::map<int, Player>, std::vector<Obstacle>> deserialize_and_update_p
     std::cout << "Player count: " << (int)num_players << std::endl;
     int curr_data_idx {2};
     for (size_t curr_player = 0; curr_player < num_players; curr_player++) {
-        uint8_t username_length = data[curr_data_idx + 9];
+        uint8_t username_length = data[curr_data_idx + 10];
 
         auto player_data_begin = data.begin();
         std::advance(player_data_begin, curr_data_idx);
 
         auto player_data_end = data.begin();
-        std::advance(player_data_end, curr_data_idx + 10 + username_length);
+        std::advance(player_data_end, curr_data_idx + 11 + username_length);
 
         std::vector<uint8_t> player_data(player_data_begin, player_data_end);
         Player p {deserialize_player(player_data)};
@@ -431,5 +434,22 @@ Projectile deserialize_projectile(const std::array<uint8_t, 4> &data) {
     auto y = deserialize_uint16(data[2], data[3]);
 
     return {x, y};
+}
+
+std::array<uint8_t, 5> serialize_new_powerup(NewPowerUp np) {
+    std::array<uint8_t, 5> data;
+    std::tie(data[0], data[1]) = serialize_uint16(np.x);
+    std::tie(data[2], data[3]) = serialize_uint16(np.y);
+    data[4] = (uint8_t)np.powerup;
+
+    return data;
+}
+
+NewPowerUp deserialize_new_powerup(std::array<uint8_t, 5> data) {
+    auto x = deserialize_uint16(data[0], data[1]);
+    auto y = deserialize_uint16(data[2], data[3]);
+    PowerUp p = (PowerUp)data[4];
+
+    return {x, y, p};
 }
 

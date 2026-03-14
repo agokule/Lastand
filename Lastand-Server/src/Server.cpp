@@ -10,6 +10,8 @@
 #include <ostream>
 #include <string>
 #include "Obstacle.h"
+#include "random.h"
+#include "PowerUps.h"
 #include "Projectile.h"
 #include "constants.h"
 #include "Player.h"
@@ -51,13 +53,15 @@ struct ProjectileDouble {
     uint8_t player_id;
     uint16_t start_x;
     uint16_t start_y;
+    bool long_range;
 
-    ProjectileDouble(ClientProjectile p, uint8_t player_id)
+    ProjectileDouble(ClientProjectile p, uint8_t player_id, bool long_range)
         : x{static_cast<double>(p.x)}, y{static_cast<double>(p.y)},
           dx{p.dx / std::sqrt(std::pow(p.dx, 2) + std::pow(p.dy, 2))},
           dy{std::sqrt(1 - dx * dx) * (p.dy < 0 ? -1 : 1)},
           player_id{player_id},
-          start_x{p.x}, start_y{p.y}
+          start_x{p.x}, start_y{p.y},
+          long_range {long_range}
     {}
 
     void move(uint8_t times = 1) {
@@ -124,7 +128,8 @@ void parse_client_shoot(const ENetEvent &event, std::vector<ProjectileDouble> &p
         event.packet->data[12],
     };
     ClientProjectile p {deserialize_client_projectile(projectile_data)};
-    ProjectileDouble pd {p, static_cast<ClientData *>(event.peer->data)->p.id};
+    ClientData& cd = *static_cast<ClientData *>(event.peer->data);
+    ProjectileDouble pd {p, cd.p.id, cd.p.powerups & PowerUp::LongRangeProjectiles};
 
 #ifdef DEBUG
     std::cout << "Shooting projectile: " << pd.x << ", " << pd.y << ", " << p.dx << ", " << p.dy << '\n';
@@ -209,7 +214,68 @@ void parse_event(const ENetEvent &event, std::vector<ProjectileDouble> &projecti
     }
 }
 
-std::map<uint8_t, uint8_t> run_game_tick(std::map<int, ClientData> &players, const std::vector<Obstacle> &obstacles, std::vector<ProjectileDouble> &projectiles) {
+struct GameTickResult {
+    std::map<uint8_t, uint8_t> dead_players;
+    bool new_powerup_spawned = false;
+    std::map<uint8_t, NewPowerUp> powerups_lost;
+};
+
+GameTickResult run_game_tick(std::map<int, ClientData> &players, const std::vector<Obstacle> &obstacles, std::vector<ProjectileDouble> &projectiles, std::vector<NewPowerUp>& powerups_available) {
+    GameTickResult result;
+
+    for (auto it = powerups_available.begin(); it != powerups_available.end(); it++) {
+        bool collision = false;
+        auto& p = *it;
+        for (auto& data : players) {
+            auto& player = data.second.p;
+            if (!point_in_rect(player.x, player.y, player_size, player_size, p.x, p.y))
+                continue;
+
+            player.powerups |= p.powerup;
+            result.powerups_lost.emplace(player.id, p);
+            collision = true;
+            break;
+        }
+        if (collision) {
+            it = powerups_available.erase(it);
+            if (it == powerups_available.end())
+                break;
+        }
+    }
+
+    if (random(1000) == 1) {
+        result.new_powerup_spawned = true;
+        // spawn a new powerup
+        uint16_t x = 0, y = 0;
+        while (true) {
+            x = random(max_x);
+            y = random(max_y);
+            if (std::all_of(obstacles.begin(), obstacles.end(),
+                            [x, y](const Obstacle& o) {
+                                return !point_in_rect(o.x, o.y, o.width, o.height, x, y);
+                            }) &&
+                std::all_of(powerups_available.begin(), powerups_available.end(),
+                            [x, y](const NewPowerUp& p) {
+                                return (p.x != x || p.y != y);
+                            })
+            )
+                break;
+        }
+        auto power = random(3);
+        PowerUp powerup;
+        switch (power) {
+            case 0:
+                powerup = PowerUp::PhaseThroughObstacles;
+                break;
+            case 1:
+                powerup = PowerUp::Speed;
+                break;
+            case 2:
+                powerup = PowerUp::LongRangeProjectiles;
+        }
+        powerups_available.emplace_back(x, y, powerup);
+    }
+
     for (auto &[id, data] : players) {
         if (data.player_movement == std::make_pair<short, short>(0, 0))
             continue;
@@ -226,27 +292,32 @@ std::map<uint8_t, uint8_t> run_game_tick(std::map<int, ClientData> &players, con
             continue;
         Player test_px {data.p};
         test_px.move(std::make_pair(data.player_movement.first, 0));
+        if (data.p.powerups & PowerUp::Speed)
+            test_px.move(std::make_pair(data.player_movement.first, 0));
         auto collision_x = detect_collision(test_px, obstacles);
 
         Player test_py {data.p};
         test_py.move(std::make_pair(0, data.player_movement.second));
+        if (data.p.powerups & PowerUp::Speed)
+            test_py.move(std::make_pair(0, data.player_movement.second));
         auto collision_y = detect_collision(test_py, obstacles);
 
 #ifdef DEBUG
         std::cout << "Collision x: " << collision_x << ", Collision y: " << collision_y << '\n';
 #endif
 
-        if (collision_x)
+        if (collision_x && !(data.p.powerups & PowerUp::PhaseThroughObstacles))
             actual_movement.first = 0;
-        if (collision_y)
+        if (collision_y && !(data.p.powerups & PowerUp::PhaseThroughObstacles))
             actual_movement.second = 0;
         data.p.move(actual_movement);
+        if (data.p.powerups & PowerUp::Speed)
+            data.p.move(actual_movement);
 #ifdef DEBUG
         if (actual_movement != std::make_pair<short, short>(0, 0))
             std::cout << "Player moved to " << id << ": " << data.p.x << ", " << data.p.y << '\n';
 #endif
     }
-    std::map<uint8_t, uint8_t> dead_players;
     for (auto it = projectiles.begin(); it != projectiles.end(); it++) {
         auto& p = *it;
         p.move(4);
@@ -263,20 +334,21 @@ std::map<uint8_t, uint8_t> run_game_tick(std::map<int, ClientData> &players, con
                 return false;
         });
         double distance_travelled = std::sqrt(std::pow(p.x - p.start_x, 2) + std::pow(p.y - p.start_y, 2));
-        if (p.x > max_x || p.y > max_y + player_size || p.x < min_x || p.y < min_y || (hit_player) || distance_travelled >= max_obstacle_distance_travelled ||
+        auto max_distance = max_obstacle_distance_travelled + (p.long_range ? max_obstacle_distance_travelled : 0);
+        if (p.x > max_x || p.y > max_y + player_size || p.x < min_x || p.y < min_y || (hit_player) || distance_travelled >= max_distance ||
             std::any_of(obstacles.begin(), obstacles.end(), 
                         [p](Obstacle ob) { return point_in_rect(ob.x, ob.y, ob.width, ob.height, p.x, p.y); })
         ) {
             if (hit_player) {
                 // someone got hit and died
-                dead_players[player_that_got_hit.id] = p.player_id;
+                result.dead_players[player_that_got_hit.id] = p.player_id;
             }
             it = projectiles.erase(it);
             if (it == projectiles.end())
                 break;
         }
     }
-    return dead_players;
+    return result;
 }
 
 int main(int argv, char **argc) {
@@ -301,6 +373,7 @@ int main(int argv, char **argc) {
 
     std::map<int, ClientData> players;
     std::vector<ProjectileDouble> projectiles;
+    std::vector<NewPowerUp> powerups_available;
     int new_player_id {0};
 
     bool running = true;
@@ -438,7 +511,7 @@ int main(int argv, char **argc) {
         }
         if (elapsed_time_ms >= tick_rate_ms || is_within(elapsed_time_ms, tick_rate_ms, 1)) {
             last_time = now;
-            auto dead_players = run_game_tick(players, obstacles, projectiles);
+            auto [dead_players, new_powerup_spawned, powerups_gone] = run_game_tick(players, obstacles, projectiles, powerups_available);
             for (auto [killed, killer] : dead_players) {
                 players.erase(killed);
                 std::vector<uint8_t> data_to_send {
@@ -447,6 +520,24 @@ int main(int argv, char **argc) {
                     killed
                 };
                 broadcast_packet(server, data_to_send, channel_events);
+            }
+            if (new_powerup_spawned) {
+                std::vector<uint8_t> data_to_send {(uint8_t)MessageToClientTypes::NewPowerUpSpawned};
+                auto powerup_data = serialize_new_powerup(powerups_available.back());
+                data_to_send.insert(data_to_send.end(), powerup_data.begin(), powerup_data.end());
+                broadcast_packet(server, data_to_send, channel_updates);
+            }
+
+            if (!powerups_gone.empty()) {
+                std::vector<uint8_t> data_to_send {(uint8_t)MessageToClientTypes::PowerUpsClaimed};
+                data_to_send.push_back(powerups_gone.size());
+                for (const auto& [player_id, powerup] : powerups_gone) {
+                    data_to_send.push_back(player_id);
+                    auto powerup_data = serialize_new_powerup(powerup);
+                    data_to_send.insert(data_to_send.end(), powerup_data.begin(), powerup_data.end());
+                }
+
+                broadcast_packet(server, data_to_send, channel_updates);
             }
 
             std::vector<Player> players_to_update;
