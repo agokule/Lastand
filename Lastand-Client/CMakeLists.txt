@@ -38,11 +38,6 @@ target_link_libraries(Lastand-Client PRIVATE
     enet
 )
 
-if(MSVC)
-    target_link_libraries(Lastand-Server PRIVATE ws2_32 winmm)
-    set(SUBSYSTEM_LINKER_OPTIONS "/SUBSYSTEM:WINDOWS")
-endif()
-
 # Handle copying SDL3 DLLs
 if(WIN32)
     add_custom_command(

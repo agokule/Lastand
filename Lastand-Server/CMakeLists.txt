@@ -19,6 +19,7 @@ target_link_libraries(Lastand-Server PRIVATE Lastand-Core enet)
 
 if(MSVC)
     target_link_libraries(Lastand-Server PRIVATE ws2_32 winmm)
+    set(SUBSYSTEM_LINKER_OPTIONS "/SUBSYSTEM:WINDOWS")
 endif()
 
 
