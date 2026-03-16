@@ -26,6 +26,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_stdlib.h"
+#include "utils.h"
 
 const uint16_t window_height {window_size + 100};
 
@@ -112,7 +113,7 @@ void draw_player_username(const Player &p, ImFont *font, const Player& local_pla
         next_window_pos.y += local_player.y;
     }
     ImGui::SetNextWindowPos(next_window_pos);
-    ImGui::Begin((p.username + "Username").c_str(), nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::Begin(p.username.c_str(), nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
     std::string username_to_display = p.username;
     if (ImGui::CalcTextSize(username_to_display.c_str()).x > 30)
         username_to_display = username_to_display.substr(0, 5) + "...";
@@ -272,7 +273,7 @@ std::vector<uint8_t> process_event(const SDL_Event &event, std::pair<short, shor
 
 std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map<int, Player> &player_data, std::vector<Projectile> &projectiles, std::vector<Particle> &particles, std::vector<NewPowerUp>& powerups) {
     MessageToClientTypes type {data[0]};
-    std::vector<uint8_t> data_without_type {data.begin() + 1, data.end()};
+    IteratorRange data_without_type {data.cbegin() + 1, data.cend()};
     switch (type) {
         case MessageToClientTypes::UpdatePlayerPositions: {
 #ifdef DEBUG
@@ -339,7 +340,7 @@ std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map
             std::cout << "Player set attribute: " << (int)player_id << " " << (int)attribute_type << std::endl;
             switch (attribute_type) {
                 case SetPlayerAttributesTypes::UsernameChanged: {
-                    std::string username {data_without_type.begin() + 3, data_without_type.end()};
+                    std::string username {data_without_type.start + 3, data_without_type.end};
                     std::cout << "Set username of " << (int)player_id << " to: " << username << '\n';
                     ss << player_data.at(player_id).username << " has changed their username to " << username << std::endl;
                     player_data.at(player_id).username = username;
@@ -393,11 +394,11 @@ std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map
             break;
         }
         case MessageToClientTypes::PowerUpsClaimed: {
-            auto n_claimed = data_without_type.front();
+            uint8_t n_claimed = *data_without_type.start;
             for (auto idx = 0u; idx < n_claimed; idx++) {
                 auto id = 1 + idx * (sizeof(NewPowerUp) + 1);
 
-                auto start = std::next(data_without_type.begin(), id + 1);
+                auto start = std::next(data_without_type.start, id + 1);
                 auto end = std::next(start, sizeof(NewPowerUp) - 1);
                 std::array<uint8_t, 5> data;
                 auto dit = data.begin();
@@ -440,7 +441,7 @@ Player get_this_player(ENetHost *client) {
     }
     Player this_player;
     if (event.type == ENET_EVENT_TYPE_RECEIVE) {
-        std::vector<uint8_t> vec(event.packet->data + 1, event.packet->data + event.packet->dataLength);
+        IteratorRange vec {event.packet->data + 1, event.packet->data + event.packet->dataLength};
         std::cout << "Data received: " << *(int*)event.packet->data << " and " << vec << std::endl;
         this_player = deserialize_player(vec);
         std::cout << "Received player: " << this_player.username << ", ("
@@ -462,7 +463,7 @@ std::pair<std::map<int, Player>, std::vector<Obstacle>> get_previous_game_data(E
         std::exit(1);
     }
     if (event.type == ENET_EVENT_TYPE_RECEIVE) {
-        std::vector<uint8_t> vec(event.packet->data + 1, event.packet->data + event.packet->dataLength);
+        IteratorRange vec {event.packet->data + 1, event.packet->data + event.packet->dataLength};
         std::cout << "Data received: " << *(int*)event.packet->data << " and " << vec << std::endl;
         auto [previous_players, obstacles] = deserialize_and_update_previous_game_data(vec);
         std::cout << "Received " << previous_players.size() << " player(s) and " << obstacles.size() << " obstacle(s)" << std::endl;

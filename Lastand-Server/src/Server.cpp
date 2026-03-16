@@ -113,21 +113,8 @@ void parse_client_move(const ENetEvent &event) {
 
 void parse_client_shoot(const ENetEvent &event, std::vector<ProjectileDouble> &projectiles) {
     assert(event.packet->dataLength == 13);
-    std::array<uint8_t, 12> projectile_data {
-        event.packet->data[1],
-        event.packet->data[2],
-        event.packet->data[3],
-        event.packet->data[4],
-        event.packet->data[5],
-        event.packet->data[6],
-        event.packet->data[7],
-        event.packet->data[8],
-        event.packet->data[9],
-        event.packet->data[10],
-        event.packet->data[11],
-        event.packet->data[12],
-    };
-    ClientProjectile p {deserialize_client_projectile(projectile_data)};
+
+    ClientProjectile p {deserialize_client_projectile(IteratorRange<uint8_t*>{&event.packet->data[1], &event.packet->data[12]})};
     ClientData& cd = *static_cast<ClientData *>(event.peer->data);
     ProjectileDouble pd {p, cd.p.id, cd.p.powerups & PowerUp::LongRangeProjectiles};
 
@@ -185,7 +172,7 @@ void parse_event(const ENetEvent &event, std::vector<ProjectileDouble> &projecti
             event_type == MessageToServerTypes::ClientMove ||
             event_type == MessageToServerTypes::Shoot
         )) {
-            std::cerr << "Event type not recognized: " << (int)event_type << " " << __FILE_NAME__ << ": " << __LINE__ << std::endl;
+            std::cerr << "Event type not recognized: " << (int)event_type << " " << __FILE__ << ": " << __LINE__ << std::endl;
             return;
         }
         std::cout << "Received event type: " << (int)event_type << std::endl;
@@ -199,7 +186,7 @@ void parse_event(const ENetEvent &event, std::vector<ProjectileDouble> &projecti
               event_type == MessageToServerTypes::ReadyUp ||
               event_type == MessageToServerTypes::UnReady
         )) {
-            std::cerr << "Event type not recognized: " << (int)event_type << " " << __FILE_NAME__ << ": " << __LINE__ << std::endl;
+            std::cerr << "Event type not recognized: " << (int)event_type << " " << __FILE__ << ": " << __LINE__ << std::endl;
             return;
         }
         if (event_type == MessageToServerTypes::SetClientAttributes) {
@@ -438,7 +425,7 @@ int main(int argv, char **argc) {
 
 #ifdef DEBUG
                 // testing if serializing and deserializing previous game data works
-                auto [p2, o2] = deserialize_and_update_previous_game_data(previous_game_data);
+                auto [p2, o2] = deserialize_and_update_previous_game_data(IteratorRange{previous_game_data.cbegin(), previous_game_data.cend()});
                 if (p2.size() != other_players.size()) {
                     std::cerr << "slkdjflskdf" << std::endl;
                 }
@@ -472,10 +459,10 @@ int main(int argv, char **argc) {
                 break;
             }
             case ENET_EVENT_TYPE_RECEIVE: {
+#ifdef DEBUG
                 std::vector<short> data;
                 for (int i {0}; i < event.packet->dataLength; i++)
                     data.push_back(event.packet->data[i]);
-#ifdef DEBUG
                 std::cout << "A packet of length " << event.packet->dataLength
                         << " containing \"" << data << "\" "
                         << "was received from " << event.peer->address << " "

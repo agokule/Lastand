@@ -1,5 +1,6 @@
 #pragma once
 #include "PowerUps.h"
+#include "utils.h"
 #include <array>
 #include <vector>
 #ifndef SERIALIZE_H
@@ -73,37 +74,52 @@ enum class SetPlayerAttributesTypes: uint8_t {
     PowerUpRemoved = 2,
 };
 
-// TODO:
-// now that i think about it, these deserialize functions should probably
-// take two iterators start and end so that I don't have to constantly copy
-// data around into new vectors/arrays
+std::pair<uint8_t, uint8_t> serialize_uint16(uint16_t val);
+uint16_t deserialize_uint16(uint8_t high_byte, uint8_t low_byte);
+std::array<uint8_t, 4> serialize_int32(int32_t val);
+int32_t deserialize_int32(std::array<uint8_t, 4> data);
+
+std::array<uint8_t, 4> serialize_color(Color color);
+std::array<uint8_t, 4> serialize_coordinates(uint16_t x, uint16_t y);
 
 std::vector<uint8_t> serialize_player(const Player &player);
-Player deserialize_player(const std::vector<uint8_t> &data);
+template<class InputIt>
+Player deserialize_player(InputIt start, InputIt end);
+template<class InputIt>
+Player deserialize_player(IteratorRange<InputIt> data);
 
 constexpr int obstacle_data_size = 12;
 
 std::array<uint8_t, obstacle_data_size> serialize_obstacle(const Obstacle &obstacle);
-Obstacle deserialize_obstacle(const std::array<uint8_t, obstacle_data_size> &data);
+template <class InputIt>
+Obstacle deserialize_obstacle(IteratorRange<InputIt> data);
 
 void update_player_delta(ClientMovement movement, bool key_up, std::pair<short, short> &player_delta);
 
 std::vector<uint8_t> serialize_game_player_positions(const std::vector<Player> &players);
-void deserialize_and_update_game_player_positions(const std::vector<uint8_t> &data, std::map<int, Player> &players);
+template <class InputIt>
+void deserialize_and_update_game_player_positions(IteratorRange<InputIt>, std::map<int, Player> &players);
 
 std::vector<uint8_t> serialize_previous_game_data(const std::vector<Player> &players, const std::vector<Obstacle> &obstacles);
-std::pair<std::map<int, Player>, std::vector<Obstacle>> deserialize_and_update_previous_game_data(const std::vector<uint8_t> &data);
+template <class InputIt>
+std::pair<std::map<int, Player>, std::vector<Obstacle>> deserialize_and_update_previous_game_data(IteratorRange<InputIt> data);
 
 std::array<uint8_t, 12> serialize_client_projectile(ClientProjectile p);
-ClientProjectile deserialize_client_projectile(const std::array<uint8_t, 12> &data);
+template <class InputIt>
+ClientProjectile deserialize_client_projectile(IteratorRange<InputIt> data);
 
 std::array<uint8_t, 4> serialize_projectile(Projectile p);
 Projectile deserialize_projectile(const std::array<uint8_t, 4> &data);
 
-int32_t deserialize_int32(std::array<uint8_t, 4> data);
+template <class InputIt>
+int32_t deserialize_int32(IteratorRange<InputIt> data);
 std::array<uint8_t, 4> serialize_int32(int32_t val);
 
 std::array<uint8_t, 5> serialize_new_powerup(NewPowerUp np);
 NewPowerUp deserialize_new_powerup(std::array<uint8_t, 5> data);
+
+#ifndef IN_INLFILE
+#include "serialize.inl"
+#endif
 
 #endif
