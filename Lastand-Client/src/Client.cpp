@@ -16,6 +16,7 @@
 #include "SDL3/SDL_video.h"
 #include "constants.h"
 #include <enet/enet.h>
+#include <iterator>
 #include <sstream>
 #include <tuple>
 #include <utility>
@@ -29,6 +30,7 @@
 #include "utils.h"
 
 const uint16_t window_height {window_size + 100};
+static bool spectating = false;
 
 struct Particle {
     float x, y;
@@ -271,7 +273,14 @@ std::vector<uint8_t> process_event(const SDL_Event &event, std::pair<short, shor
     }
 }
 
-std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map<int, Player> &player_data, std::vector<Projectile> &projectiles, std::vector<Particle> &particles, std::vector<NewPowerUp>& powerups) {
+std::string parse_message_from_server(
+    const std::vector<uint8_t> &data,
+    std::map<int, Player> &player_data,
+    std::vector<Projectile> &projectiles,
+    std::vector<Particle> &particles,
+    std::vector<NewPowerUp>& powerups,
+    uint8_t& local_player_id
+) {
     MessageToClientTypes type {data[0]};
     IteratorRange data_without_type {data.cbegin() + 1, data.cend()};
     switch (type) {
@@ -316,7 +325,6 @@ std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map
             uint8_t killed {data_without_type[1]};
             std::stringstream ss;
             ss << player_data.at(killer).username << " has killed " << player_data.at(killed).username;
-            std::cout << ss.str() << std::endl;
 
             // add particles
             int start_x = player_data.at(killed).x / 2 + player_size;
@@ -324,6 +332,13 @@ std::string parse_message_from_server(const std::vector<uint8_t> &data, std::map
             auto new_particles = create_particles<15>(start_x, start_y);
             particles.insert(particles.end(), new_particles.begin(), new_particles.end());
 
+            if (killed == local_player_id) {
+                spectating = true;
+                local_player_id = killer;
+                ss << "\nNow spectating " << player_data.at(local_player_id).username << '\n';
+            }
+
+            std::cout << ss.str() << std::endl;
             player_data.erase(killed);
             return ss.str();
             break;
@@ -591,7 +606,7 @@ int main(int argv, char **argc) {
     auto latest_event_time = SDL_GetTicks();
 
     // the player the client is controlling
-    Player local_player;
+    uint8_t local_player_id {};
     std::map<int, Player> players;
     ENetPeer *server {nullptr};
     std::vector<Obstacle> obstacles;
@@ -608,9 +623,9 @@ int main(int argv, char **argc) {
                 running = false;
             else if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(window))
                 running = false;
-            else if (connected_to_server && players.find(local_player.id) != players.end()) {
+            else if (connected_to_server && !spectating) {
                 auto last_movement = player_movement;
-                std::vector<uint8_t> data_to_send {process_event(event, player_movement, players.at(local_player.id))};
+                std::vector<uint8_t> data_to_send {process_event(event, player_movement, players.at(local_player_id))};
                 if (!data_to_send.empty() && (player_movement != last_movement || event.type == SDL_EVENT_MOUSE_BUTTON_UP)) {
                     send_packet(server, data_to_send, channel_updates);
                 }
@@ -630,8 +645,10 @@ int main(int argv, char **argc) {
 
             if (ImGui::Button("Connect to the server")) {
                 connected_to_server = true;
+                Player local_player;
                 std::tie(local_player, players, obstacles, server) = connect_to_server(client, server_addr, port);
                 players[local_player.id] = local_player;
+                local_player_id = local_player.id;
                 // send username and color to server
                 std::vector<uint8_t> color_change {
                     static_cast<uint8_t>(MessageToServerTypes::SetClientAttributes),
@@ -660,7 +677,7 @@ int main(int argv, char **argc) {
                         for (int i{0}; i < enet_event.packet->dataLength; i++)
                             data.push_back(enet_event.packet->data[i]);
                         std::cout << "Received data: " << data << " on channel: " << (int)enet_event.channelID << '\n';
-                        std::string new_event = parse_message_from_server(data, players, projectiles, particles, powerups);
+                        std::string new_event = parse_message_from_server(data, players, projectiles, particles, powerups, local_player_id);
                         if (new_event != "") {
                             latest_event = new_event;
                             latest_event_time = SDL_GetTicks();
@@ -716,6 +733,35 @@ int main(int argv, char **argc) {
                 ImGui::Begin("#1 Victory Royale", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
                 ImGui::Text("%s won!", player_won.second.c_str());
                 ImGui::End();
+            } else if (spectating) {
+                using std::prev, std::next;
+
+                ImGui::Begin("Spectating", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+                bool can_go_previous = players.find(local_player_id) != players.begin();
+                bool can_go_next = players.find(local_player_id) != prev(players.end());
+                
+                if (!can_go_previous)
+                    ImGui::BeginDisabled();
+                if (ImGui::Button(LEFT_ARROW)) {
+                    std::cout << "spectating previous player\n";
+                    local_player_id = prev(players.find(local_player_id))->first;
+                }
+                if (!can_go_previous)
+                    ImGui::EndDisabled();
+
+                ImGui::SameLine();
+                ImGui::Text("Spectating %s", players.at(local_player_id).username.c_str());
+                ImGui::SameLine();
+
+                if (!can_go_next)
+                    ImGui::BeginDisabled();
+                if (ImGui::Button(RIGHT_ARROW)) {
+                    std::cout << "spectating next player\n";
+                    local_player_id = next(players.find(local_player_id))->first;
+                }
+                if (!can_go_next)
+                    ImGui::EndDisabled();
+                ImGui::End();
             }
         }
 
@@ -723,22 +769,22 @@ int main(int argv, char **argc) {
         SDL_RenderClear(renderer);
 
         for (const auto &[id, player] : players) {
-            if (id == local_player.id) {
-                draw_this_player(renderer, players.at(local_player.id), username_font);
+            if (id == local_player_id) {
+                draw_this_player(renderer, players.at(local_player_id));
             } else {
-                draw_player(renderer, player, players.at(local_player.id));
-                draw_player_username(player, username_font, players.at(local_player.id));
+                draw_player(renderer, player, players.at(local_player_id));
+                draw_player_username(player, players.at(local_player_id));
             }
         }
         
         for (const auto &obstacle : obstacles)
-            draw_obstacle(renderer, obstacle, players.at(local_player.id));
+            draw_obstacle(renderer, obstacle, players.at(local_player_id));
 
         for (auto p : projectiles)
-            draw_projectile(renderer, p, players.at(local_player.id));
+            draw_projectile(renderer, p, players.at(local_player_id));
 
         for (auto p : powerups)
-            draw_powerup(renderer, p, players.at(local_player.id));
+            draw_powerup(renderer, p, players.at(local_player_id));
 
 
         update_particles(particles);
