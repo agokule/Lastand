@@ -565,6 +565,14 @@ int main(int argv, char **argc) {
     ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer3_Init(renderer);
 
+    std::atexit([](){
+        ImGui_ImplSDL3_Shutdown();
+        ImGui_ImplSDLRenderer3_Shutdown();
+        ImGui::DestroyContext();
+        enet_deinitialize();
+        SDL_Quit();
+    });
+
     std::string server_addr;
     int port {};
 
@@ -825,14 +833,5 @@ int main(int argv, char **argc) {
     }
 
     std::cout << "Disconnected from server" << std::endl;
-
-    ImGui_ImplSDL3_Shutdown();
-    ImGui_ImplSDLRenderer3_Shutdown();
-    ImGui::DestroyContext();
-
-    // enet_deinitialize();
-    SDL_DestroyWindow(window);
-    SDL_DestroyRenderer(renderer);
-    SDL_Quit();
     return 0;
 }
