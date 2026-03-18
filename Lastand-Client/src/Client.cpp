@@ -32,6 +32,9 @@
 const uint16_t window_height {window_size + 100};
 static bool spectating = false;
 
+#define LEFT_ARROW "\U0000f30a" // Looks kind of like this: ←
+#define RIGHT_ARROW "\U0000f30b" // Looks kind of like this: →
+
 struct Particle {
     float x, y;
     float dx, dy;
@@ -102,10 +105,10 @@ void draw_player(SDL_Renderer *renderer, const Player &p, const Player& local_pl
     if (!success) std::cerr << "Error in SDL_RenderFillRect: " << SDL_GetError();
 }
 
-void draw_player_username(const Player &p, ImFont *font, const Player& local_player) {
+void draw_player_username(const Player &p, const Player& local_player) {
     ImVec2 next_window_pos {
-        (int)p.x - local_player.x - 8 + window_size / 2.0f,
-        (int)p.y - local_player.y - 17 + window_size / 2.0f
+        (int)p.x - local_player.x - 9 + window_size / 2.0f,
+        (int)p.y - local_player.y - 20 + window_size / 2.0f
     };
     if (local_player.id == p.id) {
         next_window_pos.x -= window_size / 2.0f;
@@ -119,13 +122,13 @@ void draw_player_username(const Player &p, ImFont *font, const Player& local_pla
     std::string username_to_display = p.username;
     if (ImGui::CalcTextSize(username_to_display.c_str()).x > 30)
         username_to_display = username_to_display.substr(0, 5) + "...";
-    ImGui::PushFont(font);
+    ImGui::PushFont(nullptr, 11.0f);
     ImGui::Text("%s", username_to_display.c_str());
     ImGui::PopFont();
     ImGui::End();
 }
 
-void draw_this_player(SDL_Renderer *renderer, Player &p, ImFont* font) {
+void draw_this_player(SDL_Renderer *renderer, Player &p) {
     auto orig_x = p.x;
     auto orig_y = p.y;
 
@@ -133,7 +136,7 @@ void draw_this_player(SDL_Renderer *renderer, Player &p, ImFont* font) {
     p.y = window_size / 2;
 
     draw_player(renderer, p, p);
-    draw_player_username(p, font, p);
+    draw_player_username(p, p);
 
     p.x = orig_x;
     p.y = orig_y;
@@ -377,7 +380,7 @@ std::string parse_message_from_server(
         case MessageToClientTypes::PlayerWon: {
             assert(data_without_type.size() == 1);
             std::cout << "Player " << (int)data_without_type[0] << " has won!" << std::endl;
-            std::string text = "Player " + std::to_string(data_without_type[0]) + " has won!";
+            std::string text = player_data[data_without_type[0]].username + " has won!";
             return text;
             break;
         }
@@ -464,7 +467,7 @@ Player get_this_player(ENetHost *client) {
                   << (int)this_player.color.g << ',' << (int)this_player.color.b << ',' << (int)this_player.color.a << "):"
                   << (int)this_player.id << std::endl;
     } else {
-        std::cerr << "Did not receive player data: " << event.type << std::endl;
+        std::cerr << "Did not receive player data: (ENetEventType)" << event.type << std::endl;
         std::exit(1);
     }
     return this_player;
@@ -535,7 +538,7 @@ int main(int argv, char **argc) {
 
     SDL_Window *window {nullptr};
     SDL_Renderer *renderer {nullptr};
-    SDL_CreateWindowAndRenderer(window_title.c_str(), window_size, window_height, SDL_WINDOW_MAXIMIZED, &window, &renderer);
+    SDL_CreateWindowAndRenderer(window_title.c_str(), window_size, window_height, SDL_WINDOW_HIGH_PIXEL_DENSITY, &window, &renderer);
 
     if (!window || window == NULL) {
         std::cerr << "Failed to create window: " << SDL_GetError() << std::endl;
@@ -551,8 +554,12 @@ int main(int argv, char **argc) {
     ImGui::CreateContext();
     ImGuiIO &io {ImGui::GetIO()};
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.Fonts->AddFontDefault();
-    ImFont *username_font = io.Fonts->AddFontFromFileTTF("fonts/ProggyClean.ttf", 9.0f);
+    io.Fonts->AddFontFromFileTTF("fonts/Rubik-Regular.ttf", 16.0f);
+
+    ImFontConfig icons_config;
+    icons_config.MergeMode = true;
+    io.Fonts->AddFontFromFileTTF("fonts/Font Awesome 7 Free-Solid-900.otf", 0.0f, &icons_config);
+
     ImGui::StyleColorsDark();
 
     ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
