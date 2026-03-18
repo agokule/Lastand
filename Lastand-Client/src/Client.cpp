@@ -31,6 +31,7 @@
 
 const uint16_t window_height {window_size + 100};
 static bool spectating = false;
+constexpr const char* restart_client = "No one left now";
 
 #define LEFT_ARROW "\U0000f30a" // Looks kind of like this: ←
 #define RIGHT_ARROW "\U0000f30b" // Looks kind of like this: →
@@ -282,7 +283,8 @@ std::string parse_message_from_server(
     std::vector<Projectile> &projectiles,
     std::vector<Particle> &particles,
     std::vector<NewPowerUp>& powerups,
-    uint8_t& local_player_id
+    uint8_t& local_player_id,
+    SDL_Window* window
 ) {
     MessageToClientTypes type {data[0]};
     IteratorRange data_without_type {data.cbegin() + 1, data.cend()};
@@ -305,8 +307,23 @@ std::string parse_message_from_server(
             int id {data_without_type[0]};
             std::cout << "Player " << id << " left" << std::endl;
             std::string username = player_data.at(id).username;
+
             player_data.erase(id);
-            return std::string("Player ") + username + " left";
+            if (id == local_player_id) {
+                if (!player_data.empty())
+                    local_player_id = player_data.begin()->first;
+                else {
+                    SDL_ShowSimpleMessageBox(
+                        SDL_MESSAGEBOX_INFORMATION,
+                        "Game Over",
+                        "No one else is connected, closing game now",
+                        window
+                    );
+                    return restart_client;
+                }
+            }
+
+            return username + " left";
             break;
         }
         case MessageToClientTypes::UpdateProjectiles: {
@@ -692,13 +709,15 @@ int main(int argv, char **argc) {
                         for (int i{0}; i < enet_event.packet->dataLength; i++)
                             data.push_back(enet_event.packet->data[i]);
                         std::cout << "Received data: " << data << " on channel: " << (int)enet_event.channelID << '\n';
-                        std::string new_event = parse_message_from_server(data, players, projectiles, particles, powerups, local_player_id);
+                        std::string new_event = parse_message_from_server(data, players, projectiles, particles, powerups, local_player_id, window);
                         if (new_event != "") {
                             latest_event = new_event;
                             latest_event_time = SDL_GetTicks();
                         }
                         if (new_event == "The game has started!")
                             game_started = true;
+                        if (new_event == restart_client)
+                            enet_peer_disconnect(enet_event.peer, 0);
                         if (data[0] == (uint8_t)MessageToClientTypes::PlayerWon) {
                             player_won = {true, players.at(data[1]).username};
 
@@ -715,6 +734,21 @@ int main(int argv, char **argc) {
                             particles.insert(particles.end(), new_particles.begin(), new_particles.end());
                         }
                         break;
+                    }
+                    case ENET_EVENT_TYPE_DISCONNECT: {
+                        game_started = false;
+                        connected_to_server = false;
+                        player_won = {false, ""};
+
+                        players.clear();
+                        obstacles.clear();
+                        projectiles.clear();
+                        particles.clear();
+                        powerups.clear();
+
+                        local_player_id = 0;
+                        spectating = false;
+                        enet_peer_reset(server);
                     }
                     default:
                         break;
