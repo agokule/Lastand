@@ -35,13 +35,20 @@ Go to the project directory
 cd Lastand
 ```
 
-If you are on linux, install [dependencies using the command for your distro from here](https://github.com/libsdl-org/SDL/blob/main/docs/README-linux.md#build-dependencies)
+If you are on linux and want to distribute your binary to others, it is recommended to install [dependencies using the command for your distro from here](https://github.com/libsdl-org/SDL/blob/main/docs/README-linux.md#build-dependencies)
 
-Run the following commands to build it:
+Run the following commands to build it with release mode:
 
 ```
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -S . -B build -G "Ninja"
 cmake --build build --config Release
+```
+
+Alternatively, if you have the [just command runner](https://github.com/casey/just), then you can simply run the following:
+
+```
+just build
+# add "release" above to build with Release mode
 ```
 
 <details>
