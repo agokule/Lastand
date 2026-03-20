@@ -207,9 +207,16 @@ struct GameTickResult {
     std::map<uint8_t, NewPowerUp> powerups_lost;
 };
 
-GameTickResult run_game_tick(std::map<int, ClientData> &players, const std::vector<Obstacle> &obstacles, std::vector<ProjectileDouble> &projectiles, std::vector<NewPowerUp>& powerups_available) {
+GameTickResult run_game_tick(
+    std::map<int, ClientData> &players,
+    const std::vector<Obstacle> &obstacles,
+    std::vector<ProjectileDouble> &projectiles,
+    std::vector<NewPowerUp> &powerups_available,
+    bool game_started
+) {
     GameTickResult result;
 
+    // check if powerup was claimed
     for (auto it = powerups_available.begin(); it != powerups_available.end(); it++) {
         bool collision = false;
         auto& p = *it;
@@ -230,7 +237,8 @@ GameTickResult run_game_tick(std::map<int, ClientData> &players, const std::vect
         }
     }
 
-    if (random(1000) == 1) {
+    // spawn new powerup
+    if (random(10'000) == 1 && game_started) {
         result.new_powerup_spawned = true;
         // spawn a new powerup
         uint16_t x = 0, y = 0;
@@ -498,7 +506,7 @@ int main(int argv, char **argc) {
         }
         if (elapsed_time_ms >= tick_rate_ms || is_within(elapsed_time_ms, tick_rate_ms, 1)) {
             last_time = now;
-            auto [dead_players, new_powerup_spawned, powerups_gone] = run_game_tick(players, obstacles, projectiles, powerups_available);
+            auto [dead_players, new_powerup_spawned, powerups_gone] = run_game_tick(players, obstacles, projectiles, powerups_available, game_started);
             for (auto [killed, killer] : dead_players) {
                 players.erase(killed);
                 std::vector<uint8_t> data_to_send {

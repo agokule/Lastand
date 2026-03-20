@@ -785,7 +785,7 @@ int main(int argv, char **argc) {
             } else if (spectating) {
                 using std::prev, std::next;
 
-                ImGui::Begin("Spectating", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+                ImGui::Begin("Spectating", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize);
                 bool can_go_previous = players.find(local_player_id) != players.begin();
                 bool can_go_next = players.find(local_player_id) != prev(players.end());
                 
