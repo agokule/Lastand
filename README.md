@@ -40,7 +40,7 @@ If you are on linux, install [dependencies using the command for your distro fro
 Run the following commands to build it:
 
 ```
-cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DSDL_TEST_LIBRARY=OFF -S . -B build -G "Ninja"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -S . -B build -G "Ninja"
 cmake --build build --config Release
 ```
 

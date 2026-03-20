@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(Lastand LANGUAGES CXX)
 
+set(SDL_TEST_LIBRARY OFF)
+
 # Set output directories
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
