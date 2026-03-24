@@ -1,4 +1,6 @@
 #include <SDL3/SDL.h>
+#include "ThreadSafeQueue.h"
+#include <chrono>
 #include "Obstacle.h"
 #include "Player.h"
 #include <algorithm>
@@ -17,7 +19,9 @@
 #include "constants.h"
 #include <enet/enet.h>
 #include <iterator>
+#include <optional>
 #include <sstream>
+#include <thread>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -536,6 +540,64 @@ std::tuple<Player, std::map<int, Player>, std::vector<Obstacle>, ENetPeer*> conn
     return {this_player, players, obstacles, server};
 }
 
+struct NetworkingPacket {
+    std::vector<uint8_t> data;
+
+    enum class State: uint8_t {
+        None,
+        ClientClosed,
+        ServerDisconnected,
+    };
+    State state = State::None;
+    short channel = channel_updates;
+};
+
+void networking(
+    ENetHost* client,
+    ENetPeer* server,
+    ThreadSafeQueue<NetworkingPacket>& inbound,
+    ThreadSafeQueue<NetworkingPacket>& outbound
+) {
+    using namespace std::chrono_literals;
+
+    bool running = true;
+
+    while (running) {
+        std::optional<NetworkingPacket> msg = outbound.try_pop();
+        while (msg.has_value()) {
+            if (msg->state == NetworkingPacket::State::ClientClosed) {
+                running = false;
+                break;
+            }
+
+            send_packet(server, msg->data, msg->channel);
+            msg = outbound.try_pop();
+        }
+
+        ENetEvent enet_event;
+        while (enet_host_service(client, &enet_event, 0) > 0) {
+            switch (enet_event.type) {
+                case ENET_EVENT_TYPE_RECEIVE: {
+                    std::vector<uint8_t> data;
+                    for (int i{0}; i < enet_event.packet->dataLength; i++)
+                        data.push_back(enet_event.packet->data[i]);
+                    std::cout << "Received data: " << data << " on channel: " << (int)enet_event.channelID << '\n';
+                    inbound.push({std::move(data), NetworkingPacket::State::None, enet_event.channelID});
+                    break;
+                }
+                case ENET_EVENT_TYPE_DISCONNECT: {
+                    inbound.push({{}, NetworkingPacket::State::ServerDisconnected, enet_event.channelID});
+                    running = false;
+                }
+                default:
+                    break;
+            }
+        }
+        std::this_thread::sleep_for(2ms);
+
+    }
+}
+
 int main(int argv, char **argc) {
     if (enet_initialize() != 0) {
         std::cerr << "An error occurred while initializing Enet!" << std::endl;
@@ -633,11 +695,13 @@ int main(int argv, char **argc) {
     bool game_started = false;
     bool is_ready = false;
     std::pair<bool, std::string> player_won {false, ""};
+
+    ThreadSafeQueue<NetworkingPacket> inbound_queue, outbound_queue;
     
     std::string latest_event;
     auto latest_event_time = SDL_GetTicks();
 
-    // the player the client is controlling
+    // the player the client is controlling/spectating
     uint8_t local_player_id {};
     std::map<int, Player> players;
     ENetPeer *server {nullptr};
@@ -645,6 +709,7 @@ int main(int argv, char **argc) {
 
     bool running = true;
     SDL_Event event;
+    std::thread networking_thread;
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
@@ -659,7 +724,7 @@ int main(int argv, char **argc) {
                 auto last_movement = player_movement;
                 std::vector<uint8_t> data_to_send {process_event(event, player_movement, players.at(local_player_id))};
                 if (!data_to_send.empty() && (player_movement != last_movement || event.type == SDL_EVENT_MOUSE_BUTTON_UP)) {
-                    send_packet(server, data_to_send, channel_updates);
+                    outbound_queue.push({std::move(data_to_send), NetworkingPacket::State::None});
                 }
             }
         }
@@ -698,60 +763,59 @@ int main(int argv, char **argc) {
                 };
                 username_change.insert(username_change.end(), username, username + strlen(username));
                 send_packet(server, username_change, channel_user_updates);
+
+                std::thread n_thread([&]() {
+                    networking(client, server, inbound_queue, outbound_queue);
+                });
+                networking_thread.swap(n_thread);
             }
             ImGui::End();
         } else {
-            ENetEvent enet_event;
-            while (enet_host_service(client, &enet_event, tick_rate_ms) > 0) {
-                switch (enet_event.type) {
-                    case ENET_EVENT_TYPE_RECEIVE: {
-                        std::vector<uint8_t> data;
-                        for (int i{0}; i < enet_event.packet->dataLength; i++)
-                            data.push_back(enet_event.packet->data[i]);
-                        std::cout << "Received data: " << data << " on channel: " << (int)enet_event.channelID << '\n';
-                        std::string new_event = parse_message_from_server(data, players, projectiles, particles, powerups, local_player_id, window);
-                        if (new_event != "") {
-                            latest_event = new_event;
-                            latest_event_time = SDL_GetTicks();
-                        }
-                        if (new_event == "The game has started!")
-                            game_started = true;
-                        if (new_event == restart_client)
-                            enet_peer_disconnect(enet_event.peer, 0);
-                        if (data[0] == (uint8_t)MessageToClientTypes::PlayerWon) {
-                            player_won = {true, players.at(data[1]).username};
+            auto data_received = inbound_queue.try_pop();
+            if (data_received.has_value()) {
+                if (data_received->state == NetworkingPacket::State::ServerDisconnected) {
+                    game_started = false;
+                    connected_to_server = false;
+                    player_won = {false, ""};
 
-                            // add a lot of explosions (otherwise known as particles)
-                            auto new_particles = create_particles<10>(players.at(data[1]).x / 2 + player_size, players.at(data[1]).y / 2 + player_size, 100);
-                            particles.insert(particles.end(), new_particles.begin(), new_particles.end());
-                            new_particles = create_particles<10>(0, 0, 50);
-                            particles.insert(particles.end(), new_particles.begin(), new_particles.end());
-                            new_particles = create_particles<10>(window_size, window_size, 50);
-                            particles.insert(particles.end(), new_particles.begin(), new_particles.end());
-                            new_particles = create_particles<10>(window_size, 0, 50);
-                            particles.insert(particles.end(), new_particles.begin(), new_particles.end());
-                            new_particles = create_particles<10>(0, window_size, 50);
-                            particles.insert(particles.end(), new_particles.begin(), new_particles.end());
-                        }
-                        break;
+                    players.clear();
+                    obstacles.clear();
+                    projectiles.clear();
+                    particles.clear();
+                    powerups.clear();
+
+                    local_player_id = 0;
+                    spectating = false;
+                    enet_peer_reset(server);
+                    networking_thread.join();
+                } else {
+                    std::string new_event = parse_message_from_server(data_received->data, players, projectiles, particles, powerups, local_player_id, window);
+                    if (new_event != "") {
+                        latest_event = new_event;
+                        latest_event_time = SDL_GetTicks();
                     }
-                    case ENET_EVENT_TYPE_DISCONNECT: {
-                        game_started = false;
-                        connected_to_server = false;
-                        player_won = {false, ""};
-
-                        players.clear();
-                        obstacles.clear();
-                        projectiles.clear();
-                        particles.clear();
-                        powerups.clear();
-
-                        local_player_id = 0;
-                        spectating = false;
-                        enet_peer_reset(server);
+                    if (new_event == "The game has started!")
+                        game_started = true;
+                    if (new_event == restart_client) {
+                        enet_peer_disconnect(server, 0);
+                        outbound_queue.push({{}, NetworkingPacket::State::ClientClosed, channel_updates});
+                        networking_thread.join();
                     }
-                    default:
-                        break;
+                    if (data_received->data.at(0) == (uint8_t)MessageToClientTypes::PlayerWon) {
+                        player_won = {true, players.at(data_received->data.at(1)).username};
+
+                        // add a lot of explosions (otherwise known as particles)
+                        auto new_particles = create_particles<10>(players.at(data_received->data.at(1)).x / 2 + player_size, players.at(data_received->data.at(1)).y / 2 + player_size, 100);
+                        particles.insert(particles.end(), new_particles.begin(), new_particles.end());
+                        new_particles = create_particles<10>(0, 0, 50);
+                        particles.insert(particles.end(), new_particles.begin(), new_particles.end());
+                        new_particles = create_particles<10>(window_size, window_size, 50);
+                        particles.insert(particles.end(), new_particles.begin(), new_particles.end());
+                        new_particles = create_particles<10>(window_size, 0, 50);
+                        particles.insert(particles.end(), new_particles.begin(), new_particles.end());
+                        new_particles = create_particles<10>(0, window_size, 50);
+                        particles.insert(particles.end(), new_particles.begin(), new_particles.end());
+                    }
                 }
             }
             ImGui::Begin("Game", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
@@ -766,14 +830,12 @@ int main(int argv, char **argc) {
                 ImGui::SetNextWindowSize(ImVec2(300, 80));
                 ImGui::Begin("Waiting for game to start", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
                 if (!is_ready && ImGui::Button("Ready to play?")) {
-                    std::vector<uint8_t> ready_msg {static_cast<uint8_t>(MessageToServerTypes::ReadyUp)};
-                    send_packet(server, ready_msg, channel_user_updates);
+                    outbound_queue.push({{static_cast<uint8_t>(MessageToServerTypes::ReadyUp)}, NetworkingPacket::State::None, channel_user_updates});
                     is_ready = true;
                 } else if (is_ready) {
                     ImGui::Text("Waiting for other players to be ready...");
                     if (ImGui::Button("Unready")) {
-                        std::vector<uint8_t> not_ready_msg {static_cast<uint8_t>(MessageToServerTypes::UnReady)};
-                        send_packet(server, not_ready_msg, channel_user_updates);
+                        outbound_queue.push({{static_cast<uint8_t>(MessageToServerTypes::UnReady)}, NetworkingPacket::State::None, channel_user_updates});
                         is_ready = false;
                     }
                 }
@@ -846,11 +908,15 @@ int main(int argv, char **argc) {
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
 
         SDL_RenderPresent(renderer);
-        if (SDL_GetTicks() - last_time < tick_rate_ms)
-            SDL_Delay(tick_rate_ms - (SDL_GetTicks() - last_time));
+        auto elapsed = SDL_GetTicks() - last_time;
+        if (elapsed < tick_rate_ms)
+            SDL_Delay(tick_rate_ms - elapsed);
+        last_time = SDL_GetTicks();
     }
 
-
+    outbound_queue.push({{}, NetworkingPacket::State::ClientClosed, channel_updates});
+    if (networking_thread.joinable())
+        networking_thread.join();
     enet_peer_disconnect(server, 0);
     ENetEvent enet_event;
     while (enet_host_service(client, &enet_event, 500) > 0) {
