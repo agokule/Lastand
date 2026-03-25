@@ -713,6 +713,28 @@ int main(int argv, char **argc) {
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
+    auto cleanup = [&]() {
+        game_started = false;
+        connected_to_server = false;
+        player_won = {false, ""};
+
+        players.clear();
+        obstacles.clear();
+        projectiles.clear();
+        particles.clear();
+        powerups.clear();
+
+        local_player_id = 0;
+        spectating = false;
+
+        outbound_queue.push({{}, NetworkingPacket::State::ClientClosed, channel_updates});
+        enet_peer_reset(server);
+        networking_thread.join();
+
+        inbound_queue.reset();
+        outbound_queue.reset();
+    };
+
     while (running) {
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
@@ -773,22 +795,9 @@ int main(int argv, char **argc) {
         } else {
             auto data_received = inbound_queue.try_pop();
             if (data_received.has_value()) {
-                if (data_received->state == NetworkingPacket::State::ServerDisconnected) {
-                    game_started = false;
-                    connected_to_server = false;
-                    player_won = {false, ""};
-
-                    players.clear();
-                    obstacles.clear();
-                    projectiles.clear();
-                    particles.clear();
-                    powerups.clear();
-
-                    local_player_id = 0;
-                    spectating = false;
-                    enet_peer_reset(server);
-                    networking_thread.join();
-                } else {
+                if (data_received->state == NetworkingPacket::State::ServerDisconnected)
+                    cleanup();
+                else {
                     std::string new_event = parse_message_from_server(data_received->data, players, projectiles, particles, powerups, local_player_id, window);
                     if (new_event != "") {
                         latest_event = new_event;
@@ -796,11 +805,8 @@ int main(int argv, char **argc) {
                     }
                     if (new_event == "The game has started!")
                         game_started = true;
-                    if (new_event == restart_client) {
-                        enet_peer_disconnect(server, 0);
-                        outbound_queue.push({{}, NetworkingPacket::State::ClientClosed, channel_updates});
-                        networking_thread.join();
-                    }
+                    if (new_event == restart_client)
+                        cleanup();
                     if (data_received->data.at(0) == (uint8_t)MessageToClientTypes::PlayerWon) {
                         player_won = {true, players.at(data_received->data.at(1)).username};
 
