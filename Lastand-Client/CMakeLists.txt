@@ -12,8 +12,9 @@ add_executable(Lastand-Client ${CLIENT_SOURCES}
 )
 if(MINGW)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libstdc++ -static-libgcc")
-    if(WIN32)
-        #        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mwindows")
+    if(WIN32 AND DISTRIBUTION_MODE)
+        # disable the console window
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mwindows")
     endif()
 endif()
 target_compile_definitions(Lastand-Client PRIVATE $<$<CONFIG:Debug>:DEBUG>)
