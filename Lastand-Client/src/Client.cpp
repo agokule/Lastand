@@ -793,8 +793,8 @@ int main(int argv, char **argc) {
             }
             ImGui::End();
         } else {
-            auto data_received = inbound_queue.try_pop();
-            if (data_received.has_value()) {
+            std::optional<NetworkingPacket> data_received;
+            while ((data_received = inbound_queue.try_pop()).has_value()) {
                 if (data_received->state == NetworkingPacket::State::ServerDisconnected)
                     cleanup();
                 else {
