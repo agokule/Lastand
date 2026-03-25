@@ -546,7 +546,7 @@ int main(int argv, char **argc) {
             if (!players_to_update.empty()) {
                 std::vector<uint8_t> data_to_send {serialize_game_player_positions(players_to_update)};
                 data_to_send.insert(data_to_send.cbegin(), static_cast<uint8_t>(MessageToClientTypes::UpdatePlayerPositions));
-                broadcast_packet(server, data_to_send, channel_updates, ENET_PACKET_FLAG_UNSEQUENCED);
+                broadcast_packet(server, data_to_send, channel_user_updates, ENET_PACKET_FLAG_UNSEQUENCED);
             }
 
             if (!projectiles.empty() || !sent_empty_projectiles) {
