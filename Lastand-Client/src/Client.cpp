@@ -593,7 +593,7 @@ void networking(
                     break;
             }
         }
-        std::this_thread::sleep_for(2ms);
+        std::this_thread::sleep_for(1ms);
 
     }
 }
