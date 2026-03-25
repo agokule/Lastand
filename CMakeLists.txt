@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.20)
 
 project(Lastand LANGUAGES CXX)
 
+option(DISTRIBUTION_MODE "Enable distribution mode (optimized, no debug info)" OFF)
+
+if (DISTRIBUTION_MODE)
+    set(CMAKE_BUILD_TYPE "Release")
+endif()
+
 set(SDL_TEST_LIBRARY OFF)
 
 # Set output directories
