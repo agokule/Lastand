@@ -28,7 +28,12 @@ public:
     }
 
     void reset() {
-        queue.c.clear();
+        while (!queue.empty())
+            queue.pop();
+    }
+
+    bool empty() const {
+        return queue.empty();
     }
 };
 
