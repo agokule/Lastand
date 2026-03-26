@@ -7,8 +7,10 @@
 #include <enet/enet.h>
 #include <ios>
 #include <iostream>
+#include <optional>
 #include <ostream>
 #include <string>
+#include <thread>
 #include "Obstacle.h"
 #include "random.h"
 #include "PowerUps.h"
@@ -22,6 +24,7 @@
 #include <chrono>
 #include "physics.h"
 #include "utils.h"
+#include "ThreadSafeQueue.h"
 
 int players_connected {0};
 const int max_players = 100;
@@ -72,6 +75,24 @@ struct ProjectileDouble {
     }
 };
 
+// Inbound: network thread pushes these to the game thread
+struct InboundEvent {
+    enum class Type { Connect, Disconnect, Receive };
+    Type type;
+    ENetPeer* peer;
+    std::vector<uint8_t> data; // packet bytes for Receive events, empty otherwise
+    uint8_t channel = 0;
+};
+
+// Outbound: game thread pushes these to the network thread
+// peer == nullptr means broadcast to all clients
+struct OutboundPacket {
+    std::vector<uint8_t> data;
+    ENetPeer* peer = nullptr;
+    int channel;
+    ENetPacketFlag flags = ENET_PACKET_FLAG_RELIABLE;
+    bool shutdown = false;
+};
 
 std::ostream &operator<<(std::ostream &os, const ENetAddress &e) {
     os << e.host << ':' << e.port;
@@ -94,10 +115,10 @@ void broadcast_packet(ENetHost *server, const std::vector<uint8_t> &data, int ch
     enet_host_broadcast(server, channel_id, packet);
 }
 
-void parse_client_move(const ENetEvent &event) {
-    ClientData &cd {*static_cast<ClientData *>(event.peer->data)};
-    ClientMovementTypes movement_type {event.packet->data[1]};
-    ClientMovement movement {event.packet->data[2]};
+void parse_client_move(ENetPeer* peer, const std::vector<uint8_t>& data) {
+    ClientData &cd {*static_cast<ClientData *>(peer->data)};
+    ClientMovementTypes movement_type {data[1]};
+    ClientMovement movement {data[2]};
     switch (movement_type) {
         case ClientMovementTypes::Start:
             update_player_delta(movement, false, cd.player_movement);
@@ -111,11 +132,10 @@ void parse_client_move(const ENetEvent &event) {
     std::cout << "Client movement updated to: " << cd.player_movement.first << ", " << cd.player_movement.second << '\n';
 }
 
-void parse_client_shoot(const ENetEvent &event, std::vector<ProjectileDouble> &projectiles) {
-    assert(event.packet->dataLength == 13);
-
-    ClientProjectile p {deserialize_client_projectile(IteratorRange<uint8_t*>{&event.packet->data[1], &event.packet->data[12]})};
-    ClientData& cd = *static_cast<ClientData *>(event.peer->data);
+void parse_client_shoot(ENetPeer* peer, const std::vector<uint8_t>& data, std::vector<ProjectileDouble> &projectiles) {
+    assert(data.size() == 13);
+    ClientProjectile p {deserialize_client_projectile(IteratorRange<const uint8_t*>{data.data() + 1, data.data() + 12})};
+    ClientData& cd = *static_cast<ClientData *>(peer->data);
     ProjectileDouble pd {p, cd.p.id, cd.p.powerups & PowerUp::LongRangeProjectiles};
 
 #ifdef DEBUG
@@ -125,16 +145,16 @@ void parse_client_shoot(const ENetEvent &event, std::vector<ProjectileDouble> &p
     projectiles.push_back(pd);
 }
 
-void set_client_attributes(const ENetEvent &event, std::map<int, ClientData> &players) {
-    SetPlayerAttributesTypes attribute_type {event.packet->data[1]};
-    ClientData &cd {*static_cast<ClientData *>(event.peer->data)};
+void set_client_attributes(ENetPeer* peer, const std::vector<uint8_t>& data, std::map<int, ClientData> &players, ThreadSafeQueue<OutboundPacket>& outbound) {
+    SetPlayerAttributesTypes attribute_type {data[1]};
+    ClientData &cd {*static_cast<ClientData *>(peer->data)};
     auto id = cd.p.id;
     switch (attribute_type) {
         case SetPlayerAttributesTypes::UsernameChanged: {
             std::string username;
-            int username_len = event.packet->data[2];
+            int username_len = data[2];
             for (int i {3}; i < username_len + 3; i++)
-                username.push_back(event.packet->data[i]);
+                username.push_back(data[i]);
             players.at(id).p.username = username;
             std::cout << "Set username of " << (int)cd.p.id << " to: " << username << '\n';
             std::vector<uint8_t> data_to_send {
@@ -144,11 +164,11 @@ void set_client_attributes(const ENetEvent &event, std::map<int, ClientData> &pl
                 static_cast<uint8_t>(username_len),
             };
             data_to_send.insert(data_to_send.end(), username.begin(), username.end());
-            broadcast_packet(event.peer->host, data_to_send, channel_user_updates);
+            outbound.push({std::move(data_to_send), nullptr, channel_user_updates});
             break;
         }
         case SetPlayerAttributesTypes::ColorChanged: {
-            Color c {event.packet->data[2], event.packet->data[3], event.packet->data[4], event.packet->data[5]};
+            Color c {data[2], data[3], data[4], data[5]};
             players.at(id).p.color = c;
             std::cout << "Set color of " << (int)cd.p.id << " to: (" << (int)c.r << ", " << (int)c.g << ", " << (int)c.b << ", " << (int)c.a << ")\n";
             std::vector<uint8_t> data_to_send {
@@ -157,7 +177,7 @@ void set_client_attributes(const ENetEvent &event, std::map<int, ClientData> &pl
                 static_cast<uint8_t>(id),
                 c.r, c.g, c.b, c.a
             };
-            broadcast_packet(event.peer->host, data_to_send, channel_user_updates);
+            outbound.push({std::move(data_to_send), nullptr, channel_user_updates});
             break;
         }
         default:
@@ -165,9 +185,9 @@ void set_client_attributes(const ENetEvent &event, std::map<int, ClientData> &pl
     }
 }
 
-void parse_event(const ENetEvent &event, std::vector<ProjectileDouble> &projectiles, std::map<int, ClientData> &players, bool game_started) {
-    MessageToServerTypes event_type {event.packet->data[0]};
-    if (event.channelID == channel_updates) {
+void parse_event(const InboundEvent& event, std::vector<ProjectileDouble> &projectiles, std::map<int, ClientData> &players, bool game_started, ThreadSafeQueue<OutboundPacket>& outbound) {
+    MessageToServerTypes event_type {event.data[0]};
+    if (event.channel == channel_updates) {
         if (!(
             event_type == MessageToServerTypes::ClientMove ||
             event_type == MessageToServerTypes::Shoot
@@ -177,11 +197,11 @@ void parse_event(const ENetEvent &event, std::vector<ProjectileDouble> &projecti
         }
         std::cout << "Received event type: " << (int)event_type << std::endl;
 
-        if (event_type == MessageToServerTypes::ClientMove){
-            parse_client_move(event);
-        } else if (event_type == MessageToServerTypes::Shoot && game_started)
-            parse_client_shoot(event, projectiles);
-    } else if (event.channelID == channel_user_updates) {
+        if (event_type == MessageToServerTypes::ClientMove)
+            parse_client_move(event.peer, event.data);
+        else if (event_type == MessageToServerTypes::Shoot && game_started)
+            parse_client_shoot(event.peer, event.data, projectiles);
+    } else if (event.channel == channel_user_updates) {
         if (!(event_type == MessageToServerTypes::SetClientAttributes ||
               event_type == MessageToServerTypes::ReadyUp ||
               event_type == MessageToServerTypes::UnReady
@@ -190,7 +210,7 @@ void parse_event(const ENetEvent &event, std::vector<ProjectileDouble> &projecti
             return;
         }
         if (event_type == MessageToServerTypes::SetClientAttributes) {
-            set_client_attributes(event, players);
+            set_client_attributes(event.peer, event.data, players, outbound);
         } else if (event_type == MessageToServerTypes::ReadyUp) {
             std::cout << "Player " << players.at(static_cast<ClientData *>(event.peer->data)->p.id).p.id << " is ready\n";
             players.at(static_cast<ClientData *>(event.peer->data)->p.id).ready = true;
@@ -240,7 +260,6 @@ GameTickResult run_game_tick(
     // spawn new powerup
     if (random(10'000) == 1 && game_started) {
         result.new_powerup_spawned = true;
-        // spawn a new powerup
         uint16_t x = 0, y = 0;
         while (true) {
             x = random(max_x);
@@ -346,6 +365,60 @@ GameTickResult run_game_tick(
     return result;
 }
 
+void networking(
+    ENetHost* server,
+    ThreadSafeQueue<InboundEvent>& inbound,
+    ThreadSafeQueue<OutboundPacket>& outbound
+) {
+    using namespace std::chrono_literals;
+    bool running = true;
+
+    while (running) {
+        // drain the outbound queue and send all pending packets first
+        std::optional<OutboundPacket> pkt;
+        while ((pkt = outbound.try_pop()).has_value()) {
+            if (pkt->shutdown) {
+                running = false;
+                break;
+            }
+            if (pkt->peer == nullptr)
+                broadcast_packet(server, pkt->data, pkt->channel, pkt->flags);
+            else
+                send_packet(pkt->peer, pkt->data, pkt->channel, pkt->flags);
+        }
+        if (!running)
+            break;
+
+        // receive all pending network events and push them to the game thread
+        ENetEvent event;
+        while (enet_host_service(server, &event, 0) > 0) {
+            switch (event.type) {
+                case ENET_EVENT_TYPE_CONNECT:
+                    inbound.push({InboundEvent::Type::Connect, event.peer, {}, 0});
+                    break;
+                case ENET_EVENT_TYPE_RECEIVE: {
+                    std::vector<uint8_t> data(event.packet->data, event.packet->data + event.packet->dataLength);
+#ifdef DEBUG
+                    std::cout << "A packet of length " << event.packet->dataLength
+                              << " containing \"" << data << "\" "
+                              << "was received on channel " << static_cast<int>(event.channelID) << std::endl;
+#endif
+                    inbound.push({InboundEvent::Type::Receive, event.peer, std::move(data), event.channelID});
+                    enet_packet_destroy(event.packet);
+                    break;
+                }
+                case ENET_EVENT_TYPE_DISCONNECT:
+                    inbound.push({InboundEvent::Type::Disconnect, event.peer, {}, 0});
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        std::this_thread::sleep_for(1ms);
+    }
+}
+
 int main(int argv, char **argc) {
     if (enet_initialize() != 0) {
         std::cerr << "Couldn't initialize enet" << std::endl;
@@ -372,7 +445,6 @@ int main(int argv, char **argc) {
     int new_player_id {0};
 
     bool running = true;
-    ENetEvent event;
     std::cout << "hosting on port " << address.port << std::endl;
     bool game_started = false;
 
@@ -393,134 +465,132 @@ int main(int argv, char **argc) {
     }
 #endif
 
+    ThreadSafeQueue<InboundEvent> inbound_queue;
+    ThreadSafeQueue<OutboundPacket> outbound_queue;
+
+    std::thread network_thread([&]() {
+        networking(server, inbound_queue, outbound_queue);
+    });
+
     auto last_time = std::chrono::high_resolution_clock::now();
 
     while (running) {
-        int err = enet_host_service(server, &event, tick_rate_ms);
-        if (err < 0) {
-            std::cerr << "An error occurred in enet" << std::endl;
-        }
-
-        switch (event.type) {
-            case ENET_EVENT_TYPE_CONNECT: {
-                std::cout << "A new client connected from: " << event.peer->address.host << ':' << event.peer->address.port << std::endl;
-                if (game_started) {
-                    enet_peer_disconnect(event.peer, 0);
-                    std::cout << "Game has already started, disconnecting new player" << std::endl;
-                }
-                players_connected++;
-                Player p {default_player};
-                p.username += std::to_string(new_player_id);
-                p.id = new_player_id;
-                p.color = random_color();
-                ClientData c {p, false, {0, 0}};
-                players[new_player_id] = c;
-                event.peer->data = &players.at(new_player_id);
-
-                std::vector<uint8_t> broadcast_data = serialize_player(p);
-                broadcast_data.insert(broadcast_data.cbegin(), static_cast<uint8_t>(MessageToClientTypes::PlayerJoined));
-                broadcast_packet(server, broadcast_data, channel_events);
-
-                std::cout << "Sending previous game data to player " << new_player_id << std::endl;
-
-                std::vector<Player> other_players;
-                for (const auto &[id, data] : players) {
-                    if(id == new_player_id)
-                        continue;
-                    other_players.push_back(data.p);
-                }
-                std::vector<uint8_t> previous_game_data {serialize_previous_game_data(other_players, obstacles)};
-
-#ifdef DEBUG
-                // testing if serializing and deserializing previous game data works
-                auto [p2, o2] = deserialize_and_update_previous_game_data(IteratorRange{previous_game_data.cbegin(), previous_game_data.cend()});
-                if (p2.size() != other_players.size()) {
-                    std::cerr << "slkdjflskdf" << std::endl;
-                }
-                if (o2.size() != obstacles.size()) {
-                    std::cerr << "slkdjflskdf obstacles" << std::endl;
-                }
-                for (size_t i {0}; i < p2.size(); i++) {
-                    auto p1 {other_players[i]};
-                    auto p3 {p2.at(p1.id)};
-                    if (p1.id != p3.id || p1.username != p3.username || p1.x != p3.x || p1.y != p3.y || p1.color.r != p3.color.r || p1.color.g != p3.color.g || p1.color.b != p3.color.b || p1.color.a != p3.color.a) {
-                        std::cerr << "slkdjflskdf player is different\n"
-                                  << "player1: " << p1.username << "(" << (int)p1.x << ", " << (int)p1.y << ")" << "(" << (int)p1.color.r << ", " << (int)p1.color.g << ", " << (int)p1.color.b << ", " << (int)p1.color.a << ")\n"
-                                  << " player2: " << p3.username << "(" << (int)p3.x << ", " << (int)p3.y << ")" << "(" << (int)p3.color.r << ", " << (int)p3.color.g << ", " << (int)p3.color.b << ", " << (int)p3.color.a << ")" << std::endl;
+        // drain all inbound events from the network thread
+        std::optional<InboundEvent> evt;
+        while ((evt = inbound_queue.try_pop()).has_value()) {
+            switch (evt->type) {
+                case InboundEvent::Type::Connect: {
+                    std::cout << "A new client connected from: " << evt->peer->address.host << ':' << evt->peer->address.port << std::endl;
+                    if (game_started) {
+                        // tell the network thread to disconnect this peer immediately
+                        outbound_queue.push({{}, evt->peer, 0, ENET_PACKET_FLAG_RELIABLE, false});
+                        std::cout << "Game has already started, disconnecting new player" << std::endl;
+                        break;
                     }
-                }
-                std::cout << "Checking obstacles" << std::endl;
-                for (size_t i {0}; i < o2.size(); i++) {
-                    std::cout << "Checking obstacle " << i << std::endl;
-                    auto o1 {obstacles[i]};
-                    auto o3 {o2[i]};
-                    if (o1.x != o3.x || o1.y != o3.y || o1.width != o3.width || o1.height != o3.height || o1.color.r != o3.color.r || o1.color.g != o3.color.g || o1.color.b != o3.color.b || o1.color.a != o3.color.a)
-                        std::cerr << "slkdjflskdf obstacle is different " << std::endl;
-                }
-#endif
+                    players_connected++;
+                    Player p {default_player};
+                    p.username += std::to_string(new_player_id);
+                    p.id = new_player_id;
+                    p.color = random_color();
+                    ClientData c {p, false, {0, 0}};
+                    players[new_player_id] = c;
+                    // peer->data is set here on the game thread; the network thread never touches it
+                    evt->peer->data = &players.at(new_player_id);
 
-                previous_game_data.insert(previous_game_data.begin(), static_cast<uint8_t>(MessageToClientTypes::PreviousGameData));
+                    std::vector<uint8_t> broadcast_data = serialize_player(p);
+                    broadcast_data.insert(broadcast_data.cbegin(), static_cast<uint8_t>(MessageToClientTypes::PlayerJoined));
+                    outbound_queue.push({broadcast_data, nullptr, channel_events});
 
-                send_packet(event.peer, previous_game_data, channel_events);
+                    std::cout << "Sending previous game data to player " << new_player_id << std::endl;
+                    std::vector<Player> other_players;
+                    for (const auto &[id, data] : players) {
+                        if (id == new_player_id)
+                            continue;
+                        other_players.push_back(data.p);
+                    }
+                    std::vector<uint8_t> previous_game_data {serialize_previous_game_data(other_players, obstacles)};
 
-                new_player_id++;
-                break;
-            }
-            case ENET_EVENT_TYPE_RECEIVE: {
 #ifdef DEBUG
-                std::vector<short> data;
-                for (int i {0}; i < event.packet->dataLength; i++)
-                    data.push_back(event.packet->data[i]);
-                std::cout << "A packet of length " << event.packet->dataLength
-                        << " containing \"" << data << "\" "
-                        << "was received from " << event.peer->address << " "
-                        << "from channel " << static_cast<int>(event.channelID) << std::endl;
+                    // testing if serializing and deserializing previous game data works
+                    auto [p2, o2] = deserialize_and_update_previous_game_data(IteratorRange{previous_game_data.cbegin(), previous_game_data.cend()});
+                    if (p2.size() != other_players.size())
+                        std::cerr << "slkdjflskdf" << std::endl;
+                    if (o2.size() != obstacles.size())
+                        std::cerr << "slkdjflskdf obstacles" << std::endl;
+                    for (size_t i {0}; i < p2.size(); i++) {
+                        auto p1 {other_players[i]};
+                        auto p3 {p2.at(p1.id)};
+                        if (p1.id != p3.id || p1.username != p3.username || p1.x != p3.x || p1.y != p3.y || p1.color.r != p3.color.r || p1.color.g != p3.color.g || p1.color.b != p3.color.b || p1.color.a != p3.color.a) {
+                            std::cerr << "slkdjflskdf player is different\n"
+                                      << "player1: " << p1.username << "(" << (int)p1.x << ", " << (int)p1.y << ")" << "(" << (int)p1.color.r << ", " << (int)p1.color.g << ", " << (int)p1.color.b << ", " << (int)p1.color.a << ")\n"
+                                      << " player2: " << p3.username << "(" << (int)p3.x << ", " << (int)p3.y << ")" << "(" << (int)p3.color.r << ", " << (int)p3.color.g << ", " << (int)p3.color.b << ", " << (int)p3.color.a << ")" << std::endl;
+                        }
+                    }
+                    std::cout << "Checking obstacles" << std::endl;
+                    for (size_t i {0}; i < o2.size(); i++) {
+                        std::cout << "Checking obstacle " << i << std::endl;
+                        auto o1 {obstacles[i]};
+                        auto o3 {o2[i]};
+                        if (o1.x != o3.x || o1.y != o3.y || o1.width != o3.width || o1.height != o3.height || o1.color.r != o3.color.r || o1.color.g != o3.color.g || o1.color.b != o3.color.b || o1.color.a != o3.color.a)
+                            std::cerr << "slkdjflskdf obstacle is different " << std::endl;
+                    }
 #endif
-                parse_event(event, projectiles, players, game_started);
-                break;
-            }
-            case ENET_EVENT_TYPE_DISCONNECT: {
-                std::cout << event.peer->address.host << ':' << event.peer->address.port << " disconnected." << std::endl;
-                players_connected--;
-                ClientData *c = static_cast<ClientData *>(event.peer->data);
-                std::vector<uint8_t> broadcast_data {static_cast<uint8_t>(MessageToClientTypes::PlayerLeft), c->p.id};
-                auto player = players.find(c->p.id);
-                if (player != players.end()) { // if the player is still alive in the game
-                    players.erase(player);
-                    broadcast_packet(server, broadcast_data, channel_events);
+
+                    previous_game_data.insert(previous_game_data.begin(), static_cast<uint8_t>(MessageToClientTypes::PreviousGameData));
+                    outbound_queue.push({previous_game_data, evt->peer, channel_events});
+
+                    new_player_id++;
+                    break;
                 }
-                break;
+                case InboundEvent::Type::Receive: {
+                    parse_event(*evt, projectiles, players, game_started, outbound_queue);
+                    break;
+                }
+                case InboundEvent::Type::Disconnect: {
+                    std::cout << evt->peer->address.host << ':' << evt->peer->address.port << " disconnected." << std::endl;
+                    players_connected--;
+                    ClientData *c = static_cast<ClientData *>(evt->peer->data);
+                    std::vector<uint8_t> broadcast_data {static_cast<uint8_t>(MessageToClientTypes::PlayerLeft), c->p.id};
+                    auto player = players.find(c->p.id);
+                    if (player != players.end()) {
+                        players.erase(player);
+                        outbound_queue.push({broadcast_data, nullptr, channel_events});
+                    }
+                    break;
+                }
             }
-            case ENET_EVENT_TYPE_NONE:
-                break;
         }
+
         auto now = std::chrono::high_resolution_clock::now();
         auto elapsed_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
+
         if (!game_started) {
             game_started = std::all_of(players.begin(), players.end(), [](const std::pair<int, ClientData> &data) { return data.second.ready; })
                            && players_connected > 1;
             if (game_started) {
                 std::cout << "The game has started!" << std::endl;
-                broadcast_packet(server, {static_cast<uint8_t>(MessageToClientTypes::GameStarted)}, channel_events);
+                outbound_queue.push({{static_cast<uint8_t>(MessageToClientTypes::GameStarted)}, nullptr, channel_events});
             }
         }
+
         if (elapsed_time_ms >= tick_rate_ms || is_within(elapsed_time_ms, tick_rate_ms, 1)) {
             last_time = now;
             auto [dead_players, new_powerup_spawned, powerups_gone] = run_game_tick(players, obstacles, projectiles, powerups_available, game_started);
+
             for (auto [killed, killer] : dead_players) {
                 players.erase(killed);
-                std::vector<uint8_t> data_to_send {
+                outbound_queue.push({{
                     static_cast<uint8_t>(MessageToClientTypes::PlayerKilled),
                     killer,
                     killed
-                };
-                broadcast_packet(server, data_to_send, channel_events);
+                }, nullptr, channel_events});
             }
+
             if (new_powerup_spawned) {
                 std::vector<uint8_t> data_to_send {(uint8_t)MessageToClientTypes::NewPowerUpSpawned};
                 auto powerup_data = serialize_new_powerup(powerups_available.back());
                 data_to_send.insert(data_to_send.end(), powerup_data.begin(), powerup_data.end());
-                broadcast_packet(server, data_to_send, channel_updates);
+                outbound_queue.push({std::move(data_to_send), nullptr, channel_updates});
             }
 
             if (!powerups_gone.empty()) {
@@ -531,8 +601,7 @@ int main(int argv, char **argc) {
                     auto powerup_data = serialize_new_powerup(powerup);
                     data_to_send.insert(data_to_send.end(), powerup_data.begin(), powerup_data.end());
                 }
-
-                broadcast_packet(server, data_to_send, channel_updates);
+                outbound_queue.push({std::move(data_to_send), nullptr, channel_updates});
             }
 
             std::vector<Player> players_to_update;
@@ -546,7 +615,7 @@ int main(int argv, char **argc) {
             if (!players_to_update.empty()) {
                 std::vector<uint8_t> data_to_send {serialize_game_player_positions(players_to_update)};
                 data_to_send.insert(data_to_send.cbegin(), static_cast<uint8_t>(MessageToClientTypes::UpdatePlayerPositions));
-                broadcast_packet(server, data_to_send, channel_user_updates, ENET_PACKET_FLAG_UNSEQUENCED);
+                outbound_queue.push({std::move(data_to_send), nullptr, channel_updates, ENET_PACKET_FLAG_UNSEQUENCED});
             }
 
             if (!projectiles.empty() || !sent_empty_projectiles) {
@@ -556,25 +625,30 @@ int main(int argv, char **argc) {
                 projectile_data.push_back(static_cast<uint8_t>(projectiles.size()));
                 for (auto &pd: projectiles) {
                     Projectile p {static_cast<uint16_t>(pd.x), static_cast<uint16_t>(pd.y)};
-                    #ifdef DEBUG
+#ifdef DEBUG
                     printf("Projectile: (%d, %d)\n", p.x, p.y);
-                    #endif
+#endif
                     auto p_data = serialize_projectile(p);
                     projectile_data.insert(projectile_data.end(), p_data.cbegin(), p_data.cend());
                 }
-                broadcast_packet(server, projectile_data, channel_updates, ENET_PACKET_FLAG_UNSEQUENCED);
-                if (projectiles.empty())
-                    sent_empty_projectiles = true;
-                else
-                    sent_empty_projectiles = false;
+                outbound_queue.push({std::move(projectile_data), nullptr, channel_updates, ENET_PACKET_FLAG_UNSEQUENCED});
+                sent_empty_projectiles = projectiles.empty();
             }
+
             if (game_started && players.size() == 1 && !player_won) {
                 std::cout << "The game has ended!" << std::endl;
-                broadcast_packet(server, {static_cast<uint8_t>(MessageToClientTypes::PlayerWon), players.begin()->second.p.id}, channel_events);
+                outbound_queue.push({{
+                    static_cast<uint8_t>(MessageToClientTypes::PlayerWon),
+                    players.begin()->second.p.id
+                }, nullptr, channel_events});
                 player_won = true;
             }
         }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
+    outbound_queue.push({{}, nullptr, 0, ENET_PACKET_FLAG_RELIABLE, true});
+    network_thread.join();
     enet_host_destroy(server);
 }
