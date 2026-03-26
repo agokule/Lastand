@@ -351,8 +351,8 @@ std::string parse_message_from_server(
             ss << player_data.at(killer).username << " has killed " << player_data.at(killed).username;
 
             // add particles
-            int start_x = player_data.at(killed).x / 2 + player_size;
-            int start_y = player_data.at(killed).y / 2 + player_size;
+            int start_x = player_data.at(killed).x / 2 + player_size - (player_data.at(local_player_id).x + window_size / 2);
+            int start_y = player_data.at(killed).y / 2 + player_size - (player_data.at(local_player_id).y + window_size / 2);
             auto new_particles = create_particles<15>(start_x, start_y);
             particles.insert(particles.end(), new_particles.begin(), new_particles.end());
 
