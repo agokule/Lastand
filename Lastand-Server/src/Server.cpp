@@ -28,11 +28,12 @@
 
 int players_connected {0};
 const int max_players = 100;
-const Player default_player {0, 0, {255, 255, 255, 255}, "Player", 0};
 
 // the most top left the player can go
-constexpr uint16_t min_x {0};
-constexpr uint16_t min_y {0};
+constexpr uint16_t min_x {3};
+constexpr uint16_t min_y {3};
+
+const Player default_player {min_x, min_y, {255, 255, 255, 255}, "Player", 0};
 
 // the most bottom right the player can go
 constexpr uint16_t max_x {(window_size - player_size) * 2};
@@ -299,8 +300,8 @@ GameTickResult run_game_tick(
             continue;
         auto orig_adj = data.adjusted_player_movement;
         auto actual_movement = std::make_pair(data.player_movement.first, data.player_movement.second);
-        // FIXME: currently, if you have the speed powerup and go to the top left corner
-        // of the map, an integer underflow will happen and you will be banished forever
+        // FIXME: currently, if you have the speed powerup and go to the top left corner of the map, an
+        // integer underflow will happen and you flicker between being banished and back to the corner
         if ((data.p.x <= min_x && actual_movement.first == -1) ||
             (data.p.x >= max_x && actual_movement.first == 1)) {
             actual_movement.first = 0;
