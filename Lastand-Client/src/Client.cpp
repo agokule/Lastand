@@ -460,6 +460,7 @@ std::string parse_message_from_server(
                 if (it != powerups.end())
                     powerups.erase(it);
             }
+            break;
         }
         case MessageToClientTypes::UpdatePlayerMovement: {
             auto update = deserialize_client_movement_update(data_without_type);
@@ -467,6 +468,7 @@ std::string parse_message_from_server(
                 player_data.at(u.player_id).movement = u.movement;
                 std::cout << "updating movement for " << (int)u.player_id << " to " << (unsigned)u.movement << '\n';
             }
+            break;
         }
         case MessageToClientTypes::PreviousGameData:
             break; // previous game data is handled in connect_to_server() function
