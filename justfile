@@ -6,6 +6,9 @@ build type='Debug':
     cmake -DCMAKE_BUILD_TYPE={{type}} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -S . -B build
     cmake --build build --config {{type}}
 
+dist: clean
+    cmake -DDISTRIBUTION_MODE=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -S . -B build
+    cmake --build build
 
 recurse_delete := if os_family() == "windows" { "Remove-Item -Recurse -Force" } else { "rm -rf " }
 
