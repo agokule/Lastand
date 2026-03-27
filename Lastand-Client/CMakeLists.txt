@@ -48,6 +48,15 @@ if(WIN32)
     )
 endif()
 
+# Copy imgui.ini to the binary output directory after build
+add_custom_command(
+    TARGET Lastand-Client POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/imgui.ini
+        ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/imgui.ini
+    COMMENT "Copying imgui.ini to ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+)
+
 
 # Copy font folder
 add_custom_command(
