@@ -1,14 +1,14 @@
-
 # Lastand
 
-A very basic 2D multiplayer battle royale game made using SDL3, ENet, and Dear ImGui
+A very basic 2D multiplayer battle royale game made using SDL3, ENet, and Dear ImGui!
 
 ## Features
 
+- Powerups! Including one which lets you phase through walls!
 - Choosing a color
 - Play with more than 10 people
+- Multiplayer!
 - Works on linux
-
 
 ## Demo (please watch in fullscreen)
 
@@ -18,15 +18,18 @@ https://github.com/user-attachments/assets/769dfa41-18c7-47d8-a1b8-bdd76e1a9fc7
 
 
 
+## How to download
 
-## How to run locally
+Navigate to the latest [release](https://github.com/agokule/Lastand/releases) and follow instructions given there.
+
+## How to build locally and develop
 
 You will need CMake and a C++ compiler to build 
 
 Clone the project
 
 ```
-git clone https://github.com/username121546434/Lastand.git --recurse-submodules
+git clone https://github.com/agokule/Lastand.git --recurse-submodules
 ```
 
 Go to the project directory
@@ -50,52 +53,6 @@ Alternatively, if you have the [just command runner](https://github.com/casey/ju
 just build
 # add "release" above to build with Release mode
 ```
-
-<details>
-  <summary>
-    In build/bin make a new file called imgui.ini and paste the following into it:
-  </summary>
-
-```
-[Window][Debug##Default]
-Pos=120,48
-Size=400,400
-
-[Window][Dear ImGui Demo]
-Pos=27,27
-Size=550,680
-
-[Window][Dear ImGui Demo/ResizableChild_478B81A3]
-IsChild=1
-Size=499,136
-
-[Window][Dear ImGui Demo/Red_BEEF922B]
-IsChild=1
-Size=200,100
-
-[Window][Lastand]
-Pos=60,60
-Size=435,165
-
-[Window][Enter your details]
-Pos=57,61
-Size=450,205
-
-[Window][Game]
-Pos=10,608
-Size=278,75
-
-[Window][Events]
-Pos=292,608
-Size=297,74
-
-[Window][#1 Victory Royale]
-Pos=195,3
-Size=197,70
-```
-
-</details>
-
 
 Start the server
 
