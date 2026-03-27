@@ -44,7 +44,9 @@ constexpr uint16_t max_obstacle_distance_travelled {500};
 struct ClientData {
     Player p;
     bool ready = false;
-    std::pair<short, short> player_movement;
+    std::pair<short, short> player_movement = {0, 0};
+    std::pair<short, short> adjusted_player_movement = {0, 0};
+    bool player_movement_changed = false;
 };
 
 // used in the server to store projectiles with decimal coordinates
@@ -122,9 +124,11 @@ void parse_client_move(ENetPeer* peer, const std::vector<uint8_t>& data) {
     switch (movement_type) {
         case ClientMovementTypes::Start:
             update_player_delta(movement, false, cd.player_movement);
+            cd.player_movement_changed = true;
             break;
         case ClientMovementTypes::Stop:
             update_player_delta(movement, true, cd.player_movement);
+            cd.player_movement_changed = true;
             break;
         default:
             std::cerr << "Client movement type not recognized: " << (int)movement_type << std::endl;
@@ -293,7 +297,10 @@ GameTickResult run_game_tick(
     for (auto &[id, data] : players) {
         if (data.player_movement == std::make_pair<short, short>(0, 0))
             continue;
+        auto orig_adj = data.adjusted_player_movement;
         auto actual_movement = std::make_pair(data.player_movement.first, data.player_movement.second);
+        // FIXME: currently, if you have the speed powerup and go to the top left corner
+        // of the map, an integer underflow will happen and you will be banished forever
         if ((data.p.x <= min_x && actual_movement.first == -1) ||
             (data.p.x >= max_x && actual_movement.first == 1)) {
             actual_movement.first = 0;
@@ -324,6 +331,9 @@ GameTickResult run_game_tick(
             actual_movement.first = 0;
         if (collision_y && !(data.p.powerups & PowerUp::PhaseThroughObstacles))
             actual_movement.second = 0;
+        data.adjusted_player_movement = actual_movement;
+        if (data.adjusted_player_movement != orig_adj)
+            data.player_movement_changed = true;
         data.p.move(actual_movement);
         if (data.p.powerups & PowerUp::Speed)
             data.p.move(actual_movement);
@@ -472,7 +482,7 @@ int main(int argv, char **argc) {
         networking(server, inbound_queue, outbound_queue);
     });
 
-    auto last_time = std::chrono::high_resolution_clock::now();
+    auto last_time = std::chrono::steady_clock::now();
 
     while (running) {
         // drain all inbound events from the network thread
@@ -561,8 +571,10 @@ int main(int argv, char **argc) {
             }
         }
 
-        auto now = std::chrono::high_resolution_clock::now();
-        auto elapsed_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
+        using std::chrono::duration_cast;
+        auto now = std::chrono::steady_clock::now();
+        auto now_ms = duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        auto elapsed_time_ms = duration_cast<std::chrono::milliseconds>(now - last_time).count();
 
         if (!game_started) {
             game_started = std::all_of(players.begin(), players.end(), [](const std::pair<int, ClientData> &data) { return data.second.ready; })
@@ -605,14 +617,34 @@ int main(int argv, char **argc) {
             }
 
             std::vector<Player> players_to_update;
+            std::vector<ClientMovementUpdate> player_movement_changes;
             players_to_update.reserve(players.size());
-            for (const auto &[id, player_data]: players) {
+            player_movement_changes.reserve(players.size());
+            for (auto &[id, player_data]: players) {
                 if (player_data.player_movement == std::make_pair<short, short>(0, 0))
-                    continue;
-                players_to_update.push_back(player_data.p);
+                    player_data.adjusted_player_movement = {0, 0};
+
+                if (player_data.adjusted_player_movement != std::make_pair<short, short>(0, 0) ||
+                    player_data.player_movement_changed
+                ) {
+                    players_to_update.push_back(player_data.p);
+
+                }
+                if (player_data.player_movement_changed) {
+                    player_movement_changes.push_back({player_data.p.id, create_player_movement(player_data.adjusted_player_movement)});
+                    player_data.player_movement_changed = false;
+                }
             }
 
-            if (!players_to_update.empty()) {
+            if (!player_movement_changes.empty()) {
+                std::vector<uint8_t> data_to_send {
+                    serialize_client_movement_update(IteratorRange {player_movement_changes.cbegin(), player_movement_changes.cend()})
+                };
+                data_to_send.insert(data_to_send.begin(), static_cast<uint8_t>(MessageToClientTypes::UpdatePlayerMovement));
+                outbound_queue.push({std::move(data_to_send), nullptr, channel_updates, ENET_PACKET_FLAG_RELIABLE});
+            }
+
+            if (is_within(now_ms % 100, 50, 10) && !players_to_update.empty()) {
                 std::vector<uint8_t> data_to_send {serialize_game_player_positions(players_to_update)};
                 data_to_send.insert(data_to_send.cbegin(), static_cast<uint8_t>(MessageToClientTypes::UpdatePlayerPositions));
                 outbound_queue.push({std::move(data_to_send), nullptr, channel_updates, ENET_PACKET_FLAG_UNSEQUENCED});

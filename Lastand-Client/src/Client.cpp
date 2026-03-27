@@ -281,9 +281,14 @@ std::vector<uint8_t> process_event(const SDL_Event &event, std::pair<short, shor
     }
 }
 
+struct PlayerData {
+    Player p;
+    ClientMovement movement;
+};
+
 std::string parse_message_from_server(
     const std::vector<uint8_t> &data,
-    std::map<int, Player> &player_data,
+    std::map<int, PlayerData> &player_data,
     std::vector<Projectile> &projectiles,
     std::vector<Particle> &particles,
     std::vector<NewPowerUp>& powerups,
@@ -303,14 +308,14 @@ std::string parse_message_from_server(
         case MessageToClientTypes::PlayerJoined: {
             std::cout << "Player joined" << std::endl;
             Player p {deserialize_player(data_without_type)};
-            player_data[p.id] = p;
+            player_data[p.id] = {p, ClientMovement::None};
             return std::string("Player ") + p.username + " joined";
             break;
         }
         case MessageToClientTypes::PlayerLeft: {
             int id {data_without_type[0]};
             std::cout << "Player " << id << " left" << std::endl;
-            std::string username = player_data.at(id).username;
+            std::string username = player_data.at(id).p.username;
 
             player_data.erase(id);
             if (id == local_player_id) {
@@ -348,18 +353,18 @@ std::string parse_message_from_server(
             uint8_t killer {data_without_type[0]};
             uint8_t killed {data_without_type[1]};
             std::stringstream ss;
-            ss << player_data.at(killer).username << " has killed " << player_data.at(killed).username;
+            ss << player_data.at(killer).p.username << " has killed " << player_data.at(killed).p.username;
 
             // add particles
-            int start_x = player_data.at(killed).x / 2 + player_size - (player_data.at(local_player_id).x + window_size / 2);
-            int start_y = player_data.at(killed).y / 2 + player_size - (player_data.at(local_player_id).y + window_size / 2);
+            int start_x = player_data.at(killed).p.x / 2 + player_size - (player_data.at(local_player_id).p.x + window_size / 2);
+            int start_y = player_data.at(killed).p.y / 2 + player_size - (player_data.at(local_player_id).p.y + window_size / 2);
             auto new_particles = create_particles<15>(start_x, start_y);
             particles.insert(particles.end(), new_particles.begin(), new_particles.end());
 
             if (killed == local_player_id) {
                 spectating = true;
                 local_player_id = killer;
-                ss << "\nNow spectating " << player_data.at(local_player_id).username << '\n';
+                ss << "\nNow spectating " << player_data.at(local_player_id).p.username << '\n';
             }
 
             std::cout << ss.str() << std::endl;
@@ -381,14 +386,14 @@ std::string parse_message_from_server(
                 case SetPlayerAttributesTypes::UsernameChanged: {
                     std::string username {data_without_type.start + 3, data_without_type.end};
                     std::cout << "Set username of " << (int)player_id << " to: " << username << '\n';
-                    ss << player_data.at(player_id).username << " has changed their username to " << username << std::endl;
-                    player_data.at(player_id).username = username;
+                    ss << player_data.at(player_id).p.username << " has changed their username to " << username << std::endl;
+                    player_data.at(player_id).p.username = username;
                     break;
                 }
                 case SetPlayerAttributesTypes::ColorChanged: {
                     Color c {data_without_type[2], data_without_type[3], data_without_type[4], data_without_type[5]};
-                    ss << player_data.at(player_id).username << " has changed their color";
-                    player_data.at(player_id).color = c;
+                    ss << player_data.at(player_id).p.username << " has changed their color";
+                    player_data.at(player_id).p.color = c;
                     std::cout << "Set color of " << (int)player_id << " to: (" << (int)c.r << ", " << (int)c.g << ", " << (int)c.b << ", " << (int)c.a << ")\n";
                     break;
                 }
@@ -401,7 +406,7 @@ std::string parse_message_from_server(
         case MessageToClientTypes::PlayerWon: {
             assert(data_without_type.size() == 1);
             std::cout << "Player " << (int)data_without_type[0] << " has won!" << std::endl;
-            std::string text = player_data[data_without_type[0]].username + " has won!";
+            std::string text = player_data[data_without_type[0]].p.username + " has won!";
             return text;
             break;
         }
@@ -446,12 +451,21 @@ std::string parse_message_from_server(
                     dit++;
                 }
 
-                [[maybe_unused]] auto player_id = *std::prev(start);
+                auto player_id = *std::prev(start);
 
                 NewPowerUp powerup = deserialize_new_powerup(data);
+                player_data.at(player_id).p.powerups |= powerup.powerup;
+
                 auto it = std::find_if(powerups.begin(), powerups.end(), [powerup](const auto p) { return p.x == powerup.x && p.y == powerup.y; });
                 if (it != powerups.end())
                     powerups.erase(it);
+            }
+        }
+        case MessageToClientTypes::UpdatePlayerMovement: {
+            auto update = deserialize_client_movement_update(data_without_type);
+            for (ClientMovementUpdate u : update) {
+                player_data.at(u.player_id).movement = u.movement;
+                std::cout << "updating movement for " << (int)u.player_id << " to " << (unsigned)u.movement << '\n';
             }
         }
         case MessageToClientTypes::PreviousGameData:
@@ -513,7 +527,7 @@ std::pair<std::map<int, Player>, std::vector<Obstacle>> get_previous_game_data(E
     }
 }
 
-std::tuple<Player, std::map<int, Player>, std::vector<Obstacle>, ENetPeer*> connect_to_server(ENetHost *client, const std::string &server_addr, int port) {
+std::tuple<Player, std::map<int, PlayerData>, std::vector<Obstacle>, ENetPeer*> connect_to_server(ENetHost *client, const std::string &server_addr, int port) {
     ENetAddress address;
     ENetEvent enet_event;
     
@@ -537,7 +551,11 @@ std::tuple<Player, std::map<int, Player>, std::vector<Obstacle>, ENetPeer*> conn
 
     // get previous game data
     auto [players, obstacles] = get_previous_game_data(client);
-    return {this_player, players, obstacles, server};
+    std::map<int, PlayerData> player_data;
+    for (auto& [id, player] : players)
+        player_data[id] = {player, ClientMovement::None};
+
+    return {this_player, player_data, obstacles, server};
 }
 
 struct NetworkingPacket {
@@ -703,7 +721,7 @@ int main(int argv, char **argc) {
 
     // the player the client is controlling/spectating
     uint8_t local_player_id {};
-    std::map<int, Player> players;
+    std::map<int, PlayerData> players;
     ENetPeer *server {nullptr};
     std::vector<Obstacle> obstacles;
 
@@ -719,6 +737,7 @@ int main(int argv, char **argc) {
         player_won = {false, ""};
 
         players.clear();
+        player_movement = {0, 0};
         obstacles.clear();
         projectiles.clear();
         particles.clear();
@@ -744,9 +763,10 @@ int main(int argv, char **argc) {
                 running = false;
             else if (connected_to_server && !spectating) {
                 auto last_movement = player_movement;
-                std::vector<uint8_t> data_to_send {process_event(event, player_movement, players.at(local_player_id))};
+                std::vector<uint8_t> data_to_send {process_event(event, player_movement, players.at(local_player_id).p)};
                 if (!data_to_send.empty() && (player_movement != last_movement || event.type == SDL_EVENT_MOUSE_BUTTON_UP)) {
                     outbound_queue.push({std::move(data_to_send), NetworkingPacket::State::None});
+                    players.at(local_player_id).movement = create_player_movement(player_movement);
                 }
             }
         }
@@ -766,7 +786,7 @@ int main(int argv, char **argc) {
                 connected_to_server = true;
                 Player local_player;
                 std::tie(local_player, players, obstacles, server) = connect_to_server(client, server_addr, port);
-                players[local_player.id] = local_player;
+                players[local_player.id] = {local_player, ClientMovement::None};
                 local_player_id = local_player.id;
                 // send username and color to server
                 std::vector<uint8_t> color_change {
@@ -808,10 +828,10 @@ int main(int argv, char **argc) {
                     if (new_event == restart_client)
                         cleanup();
                     if (data_received->data.at(0) == (uint8_t)MessageToClientTypes::PlayerWon) {
-                        player_won = {true, players.at(data_received->data.at(1)).username};
+                        player_won = {true, players.at(data_received->data.at(1)).p.username};
 
                         // add a lot of explosions (otherwise known as particles)
-                        auto new_particles = create_particles<10>(players.at(data_received->data.at(1)).x / 2 + player_size, players.at(data_received->data.at(1)).y / 2 + player_size, 100);
+                        auto new_particles = create_particles<10>(players.at(data_received->data.at(1)).p.x / 2 + player_size, players.at(data_received->data.at(1)).p.y / 2 + player_size, 100);
                         particles.insert(particles.end(), new_particles.begin(), new_particles.end());
                         new_particles = create_particles<10>(0, 0, 50);
                         particles.insert(particles.end(), new_particles.begin(), new_particles.end());
@@ -867,7 +887,7 @@ int main(int argv, char **argc) {
                     ImGui::EndDisabled();
 
                 ImGui::SameLine();
-                ImGui::Text("Spectating %s", players.at(local_player_id).username.c_str());
+                ImGui::Text("Spectating %s", players.at(local_player_id).p.username.c_str());
                 ImGui::SameLine();
 
                 if (!can_go_next)
@@ -885,24 +905,28 @@ int main(int argv, char **argc) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
-        for (const auto &[id, player] : players) {
+        for (auto& [id, player] : players) {
+            auto movement = create_player_delta(players.at(id).movement);
+            player.p.move(movement);
+            if (player.p.powerups & PowerUp::Speed)
+                player.p.move(movement);
+            
             if (id == local_player_id) {
-                draw_this_player(renderer, players.at(local_player_id));
+                draw_this_player(renderer, players.at(local_player_id).p);
             } else {
-                draw_player(renderer, player, players.at(local_player_id));
-                draw_player_username(player, players.at(local_player_id));
+                draw_player(renderer, player.p, players.at(local_player_id).p);
+                draw_player_username(player.p, players.at(local_player_id).p);
             }
         }
         
         for (const auto &obstacle : obstacles)
-            draw_obstacle(renderer, obstacle, players.at(local_player_id));
+            draw_obstacle(renderer, obstacle, players.at(local_player_id).p);
 
         for (auto p : projectiles)
-            draw_projectile(renderer, p, players.at(local_player_id));
+            draw_projectile(renderer, p, players.at(local_player_id).p);
 
         for (auto p : powerups)
-            draw_powerup(renderer, p, players.at(local_player_id));
-
+            draw_powerup(renderer, p, players.at(local_player_id).p);
 
         update_particles(particles);
         draw_particles(renderer, particles);

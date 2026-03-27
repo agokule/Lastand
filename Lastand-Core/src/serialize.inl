@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdint>
+#include <type_traits>
 #define IN_INLFILE
 #include "serialize.h"
 #undef IN_INLFILE
@@ -68,8 +70,8 @@ Obstacle deserialize_obstacle(IteratorRange<InputIt> data) {
     return result;
 }
 
-template <typename InputIt>
-void deserialize_and_update_game_player_positions(IteratorRange<InputIt> data, std::map<int, Player> &players) {
+template <typename InputIt, typename Map>
+void deserialize_and_update_game_player_positions(IteratorRange<InputIt> data, Map &players) {
     if (data.size() < 1) return;
     uint8_t num_players = data[0];
     if (data.size() != num_players * 5 + 1) {
@@ -79,7 +81,7 @@ void deserialize_and_update_game_player_positions(IteratorRange<InputIt> data, s
 
     for (size_t curr_player = 1; curr_player <= data.size() - 5; curr_player += 5) {
         int id = data[curr_player];
-        auto &p = players[id];
+        auto &p = players[id].p;
         uint16_t x = deserialize_uint16(data[curr_player + 1], data[curr_player + 2]);
         uint16_t y = deserialize_uint16(data[curr_player + 3], data[curr_player + 4]);
         p.x = x;
@@ -171,4 +173,36 @@ std::pair<std::map<int, Player>, std::vector<Obstacle>> deserialize_and_update_p
     }
 
     return {players, obstacles};
+}
+
+template <class InputIt>
+std::vector<uint8_t> serialize_client_movement_update(IteratorRange<InputIt> data) {
+    static_assert(std::is_same<typename IteratorRange<InputIt>::InputType, ClientMovementUpdate>(), "only ClientMovementUpdate IteratorRanges are supported");
+
+    std::vector<uint8_t> result;
+    result.reserve(data.size() * sizeof(ClientMovementUpdate));
+
+    for (auto it = data.start; it != data.end; it++) {
+        ClientMovementUpdate x = *it;
+        result.push_back(x.player_id);
+        result.push_back((uint8_t)x.movement);
+    }
+
+    return result;
+}
+
+template <class InputIt>
+std::vector<ClientMovementUpdate> deserialize_client_movement_update(IteratorRange<InputIt> data) {
+    static_assert(std::is_same<typename IteratorRange<InputIt>::InputType, uint8_t>(), "only uint8_t IteratorRanges are supported");
+
+    std::vector<ClientMovementUpdate> result;
+    result.reserve(data.size() / sizeof(ClientMovementUpdate));
+
+    for (auto it = data.start; it != data.end; std::advance(it, 2)) {
+        uint8_t player_id = *it;
+        ClientMovement movement = (ClientMovement)*std::next(it);
+        result.push_back({player_id, movement});
+    }
+
+    return result;
 }
