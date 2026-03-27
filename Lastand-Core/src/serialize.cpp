@@ -7,6 +7,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <iostream>
+#include <utility>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -146,6 +147,27 @@ void update_player_delta(ClientMovement movement, bool key_up, std::pair<short, 
         if (m & (uint8_t)ClientMovement::Up || m & (uint8_t)ClientMovement::Down)
             player_delta.second = 0;
     }
+}
+
+std::pair<short, short> create_player_delta(ClientMovement movement) {
+    std::pair<short, short> delta;
+    update_player_delta(movement, false, delta);
+    return delta;
+}
+
+ClientMovement create_player_movement(std::pair<short, short> movement) {
+    ClientMovement m = ClientMovement::None;
+    if (movement.first == -1)
+        m |= ClientMovement::Left;
+    else if (movement.first == 1)
+        m |= ClientMovement::Right;
+
+    if (movement.second == -1)
+        m |= ClientMovement::Up;
+    else if (movement.second == 1)
+        m |= ClientMovement::Down;
+
+    return m;
 }
 
 // takes in a vector of players that were updated by the server and serializes them

@@ -42,6 +42,11 @@ ClientMovement operator|(ClientMovement c1, ClientMovement c2);
 ClientMovement operator|=(ClientMovement &c1, ClientMovement c2);
 bool operator&(ClientMovement c1, ClientMovement c2);
 
+struct ClientMovementUpdate {
+    uint8_t player_id;
+    ClientMovement movement;
+};
+
 enum class MessageToClientTypes: uint8_t {
     // player positions have changed, sent on channel_updates.
     // data from serialize_game_player_positions() should be after this
@@ -59,6 +64,8 @@ enum class MessageToClientTypes: uint8_t {
     UpdateProjectiles = 7,
     NewPowerUpSpawned,
     PowerUpsClaimed,
+    // update the ClientMovement for a player
+    UpdatePlayerMovement,
     GameStarted
 };
 
@@ -71,7 +78,7 @@ enum class SetPlayerAttributesTypes: uint8_t {
     UsernameChanged = 0,
     ColorChanged = 1,
     PowerUpGained = 2,
-    PowerUpRemoved = 2,
+    PowerUpRemoved = 3,
 };
 
 std::pair<uint8_t, uint8_t> serialize_uint16(uint16_t val);
@@ -96,9 +103,13 @@ Obstacle deserialize_obstacle(IteratorRange<InputIt> data);
 
 void update_player_delta(ClientMovement movement, bool key_up, std::pair<short, short> &player_delta);
 
+std::pair<short, short> create_player_delta(ClientMovement movement);
+
+ClientMovement create_player_movement(std::pair<short, short> movement);
+
 std::vector<uint8_t> serialize_game_player_positions(const std::vector<Player> &players);
-template <class InputIt>
-void deserialize_and_update_game_player_positions(IteratorRange<InputIt>, std::map<int, Player> &players);
+template <typename InputIt, typename Map>
+void deserialize_and_update_game_player_positions(IteratorRange<InputIt> data, Map &players);
 
 std::vector<uint8_t> serialize_previous_game_data(const std::vector<Player> &players, const std::vector<Obstacle> &obstacles);
 template <class InputIt>
@@ -107,6 +118,12 @@ std::pair<std::map<int, Player>, std::vector<Obstacle>> deserialize_and_update_p
 std::array<uint8_t, 12> serialize_client_projectile(ClientProjectile p);
 template <class InputIt>
 ClientProjectile deserialize_client_projectile(IteratorRange<InputIt> data);
+
+template <class InputIt>
+std::vector<uint8_t> serialize_client_movement_update(IteratorRange<InputIt> data);
+
+template <class InputIt>
+std::vector<ClientMovementUpdate> deserialize_client_movement_update(IteratorRange<InputIt> data);
 
 std::array<uint8_t, 4> serialize_projectile(Projectile p);
 Projectile deserialize_projectile(const std::array<uint8_t, 4> &data);
